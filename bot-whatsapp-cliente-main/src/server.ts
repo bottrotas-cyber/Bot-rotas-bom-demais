@@ -14,7 +14,7 @@ import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderSto
 import { defaultUserColor, normalizeDispatchAdvantageMs, normalizeDispatchBeatsEmail, normalizeDispatchMatchups, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
-import { isAlwaysBillableValidatedRouteClient, validatedRouteUsagePayload } from "./validatedRouteUsage";
+import { validatedRouteUsagePayload } from "./validatedRouteUsage";
 import { PushNotificationStore } from "./pushNotificationStore";
 import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseNotes";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
@@ -788,7 +788,7 @@ async function validateAdminRoute(routeId: string, adminEmail: string) {
 }
 
 function approveRouteImageUsage(route: RouteDispatch | undefined, clientEmail: string, reviewedBy: string) {
-  if (!route || (!route.ocr && !isAlwaysBillableValidatedRouteClient(clientEmail))) return false;
+  if (!route || (!route.ocr && !imageUsageStore.billsAllValidatedRoutes(clientEmail))) return false;
   return imageUsageStore.decideValidatedRoute(validatedRouteUsagePayload(route, clientEmail), reviewedBy);
 }
 
@@ -1553,6 +1553,26 @@ const server = http.createServer(async (request, response) => {
       }
       if (body.month !== undefined && (typeof body.month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(body.month))) throw new HttpError(400, "Mês inválido.");
       imageUsageStore.setMonthlyTotal(clientEmail, Number(body.amountCents), typeof body.month === "string" ? body.month : undefined);
+      broadcastAdminSnapshot();
+      broadcastSnapshot(clientEmail);
+      sendJson(response, 200, imageUsageStore.snapshot());
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/route-billing/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/route-billing/", "")).trim().toLowerCase();
+      const body = await readJsonBody<{ enabled?: boolean }>(request);
+      if (!panelUsers.has(clientEmail) || typeof body.enabled !== "boolean") {
+        sendJson(response, 400, { error: "Cliente ou controle de cobranÃ§a invÃ¡lido." });
+        return;
+      }
+      imageUsageStore.setBillAllValidatedRoutes(clientEmail, body.enabled);
+      if (body.enabled) {
+        for (const route of getBotForEmail(clientEmail).getRoutes().filter((item) => item.validated)) {
+          approveRouteImageUsage(route, clientEmail, authorizedEmail);
+        }
+      }
       broadcastAdminSnapshot();
       broadcastSnapshot(clientEmail);
       sendJson(response, 200, imageUsageStore.snapshot());

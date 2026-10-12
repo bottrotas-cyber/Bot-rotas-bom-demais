@@ -200,6 +200,13 @@ export function saveImageMonthlyTotal(clientEmail: string, amountCents: number, 
   });
 }
 
+export function saveRouteBillingMode(clientEmail: string, enabled: boolean) {
+  return fetchJson<AdminImageUsageSnapshot>(`/api/admin/route-billing/${encodeURIComponent(clientEmail)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled })
+  });
+}
+
 export function subscribeAdminMonitor(callback: (snapshot: AdminMonitorSnapshot) => void, onError?: (error?: unknown) => void) {
   const token = getPanelToken();
   if (!token) return () => undefined;

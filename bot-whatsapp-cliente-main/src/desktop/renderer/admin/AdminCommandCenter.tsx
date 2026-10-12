@@ -62,6 +62,7 @@ import {
   saveAdminUser,
   saveImagePricing,
   saveImageMonthlyTotal,
+  saveRouteBillingMode,
   subscribeAdminMonitor,
   validateAdminRoute
 } from "../api";
@@ -931,8 +932,12 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     excluded: 0,
     detected: 0,
     amountCents: 0,
-    defaultAmountCents: 70
+    defaultAmountCents: 70,
+    billAllValidatedRoutes: false
   });
+  const visibleDebt = clientFilter === "all"
+    ? imageUsage.totals.amountCents
+    : imageUsage.clients.find((client) => client.clientEmail === clientFilter)?.amountCents || 0;
 
   const clientIntelligence = useMemo(() => {
     const now = Date.now();
@@ -1096,6 +1101,20 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o total mensal.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateRouteBillingMode(clientEmail: string, enabled: boolean) {
+    setBusy(true);
+    try {
+      const next = await saveRouteBillingMode(clientEmail, enabled);
+      setImageUsage(next);
+      showToast(enabled ? "Todas as rotas validadas deste cliente entrarão no consumo." : "Cobrança limitada novamente às análises de imagem.");
+      refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o controle de cobrança.");
     } finally {
       setBusy(false);
     }
@@ -1327,6 +1346,10 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
             <h1>{pages.find((item) => item.id === page)?.label}</h1>
           </div>
           <div className="adminx-global-filters">
+            <button className="adminx-debt-chip" type="button" onClick={() => setPage("usage")} title="Abrir controle financeiro">
+              <CircleDollarSign size={19} />
+              <span><small>{clientFilter === "all" ? "Total a receber" : "Cliente deve"}</small><strong>{formatMoney(visibleDebt)}</strong></span>
+            </button>
             <label>
               <Search size={17} />
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente, grupo, análise, log..." />
@@ -1722,6 +1745,15 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                 <div className="adminx-pricing-list">
                   {pricingClients.map((client) => (
                     <div className="adminx-pricing-row" key={client.clientEmail}>
+                      <button
+                        aria-pressed={client.billAllValidatedRoutes}
+                        className={`button adminx-route-billing-toggle ${client.billAllValidatedRoutes ? "is-on" : ""}`}
+                        disabled={busy}
+                        type="button"
+                        onClick={() => updateRouteBillingMode(client.clientEmail, !client.billAllValidatedRoutes)}
+                      >
+                        {client.billAllValidatedRoutes ? "Todas as rotas: cobrando" : "Somente IA: cobrar todas as rotas"}
+                      </button>
                       <div><strong>{client.clientEmail}</strong><small>{client.billable} aprovada(s) · total atual {formatMoney(client.amountCents)}</small></div>
                       <label><span>Preço R$</span><input inputMode="decimal" value={usageAmounts[`client:${client.clientEmail}`] || "0,00"} onChange={(event) => editUsageAmount(`client:${client.clientEmail}`, event.target.value)} /></label>
                       <button className="button" disabled={busy} type="button" onClick={() => updateImagePricing(client.clientEmail)}>Preço padrão</button>

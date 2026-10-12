@@ -312,6 +312,8 @@ export type ImageUsageClientSummary = {
   amountCents: number;
   defaultAmountCents: number;
   manualTotalAmountCents?: number;
+  /** Charge validated routes from OCR, Target and manual dispatches. */
+  billAllValidatedRoutes: boolean;
 };
 
 export type ClientImageUsageSnapshot = {
@@ -323,7 +325,7 @@ export type AdminImageUsageSnapshot = {
   month: string;
   entries: ImageUsageEntry[];
   clients: ImageUsageClientSummary[];
-  totals: Omit<ImageUsageClientSummary, "clientEmail" | "month" | "defaultAmountCents">;
+  totals: Omit<ImageUsageClientSummary, "clientEmail" | "month" | "defaultAmountCents" | "billAllValidatedRoutes">;
 };
 
 export type PanelUserRole = "client" | "admin";

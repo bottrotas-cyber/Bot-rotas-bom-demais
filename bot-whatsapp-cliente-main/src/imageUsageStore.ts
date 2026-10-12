@@ -1,11 +1,13 @@
 import { writeJsonAtomic } from "./storageJson";
 import fs from "fs";
 import { AdminImageUsageSnapshot, ClientImageUsageSnapshot, ImageAnalysisResult, ImageUsageDecision, ImageUsageEntry } from "./shared/types";
+import { isAlwaysBillableValidatedRouteClient } from "./validatedRouteUsage";
 
 type StoredImageUsage = {
   entries: ImageUsageEntry[];
   defaultAmounts: Record<string, number>;
   monthlyTotalOverrides: Record<string, number>;
+  billAllValidatedRoutes: Record<string, boolean>;
 };
 
 type RecordAnalysisInput = {
@@ -127,7 +129,21 @@ export class ImageUsageStore {
       this.data.monthlyTotalOverrides[key.slice(0, -previous.length) + next] = this.data.monthlyTotalOverrides[key];
       delete this.data.monthlyTotalOverrides[key];
     }
+    if (Object.prototype.hasOwnProperty.call(this.data.billAllValidatedRoutes, previous)) {
+      this.data.billAllValidatedRoutes[next] = this.data.billAllValidatedRoutes[previous];
+      delete this.data.billAllValidatedRoutes[previous];
+    }
     this.save();
+  }
+
+  setBillAllValidatedRoutes(clientEmail: string, enabled: boolean) {
+    this.data.billAllValidatedRoutes[clientEmail.trim().toLowerCase()] = Boolean(enabled);
+    this.save();
+  }
+
+  billsAllValidatedRoutes(clientEmail: string) {
+    const email = clientEmail.trim().toLowerCase();
+    return this.data.billAllValidatedRoutes[email] ?? isAlwaysBillableValidatedRouteClient(email);
   }
 
   setDefaultAmount(clientEmail: string, amountCents: number) {
@@ -145,7 +161,7 @@ export class ImageUsageStore {
   snapshot(month = this.currentMonth()): AdminImageUsageSnapshot {
     const entries = this.data.entries.filter((entry) => entry.createdAt.slice(0, 7) === month);
     const overrideEmails = Object.keys(this.data.monthlyTotalOverrides).filter((key) => key.startsWith(`${month}:`)).map((key) => key.slice(month.length + 1));
-    const emails = new Set([...Object.keys(this.data.defaultAmounts), ...overrideEmails, ...entries.map((entry) => entry.clientEmail)]);
+    const emails = new Set([...Object.keys(this.data.defaultAmounts), ...Object.keys(this.data.billAllValidatedRoutes), ...overrideEmails, ...entries.map((entry) => entry.clientEmail)]);
     const clients = Array.from(emails).map((email) => this.summary(email, month, entries)).sort((a, b) => b.amountCents - a.amountCents || a.clientEmail.localeCompare(b.clientEmail));
     return {
       month,
@@ -185,7 +201,8 @@ export class ImageUsageStore {
       detected: clientEntries.filter((entry) => entry.result === "detected").length,
       amountCents: manualTotalAmountCents === undefined ? calculatedAmountCents : manualTotalAmountCents,
       defaultAmountCents: this.defaultAmount(clientEmail),
-      manualTotalAmountCents
+      manualTotalAmountCents,
+      billAllValidatedRoutes: this.billsAllValidatedRoutes(clientEmail)
     };
   }
 
@@ -232,7 +249,8 @@ export class ImageUsageStore {
           return {
             entries: parsed.entries,
             defaultAmounts: parsed.defaultAmounts,
-            monthlyTotalOverrides: parsed.monthlyTotalOverrides && typeof parsed.monthlyTotalOverrides === "object" ? parsed.monthlyTotalOverrides : {}
+            monthlyTotalOverrides: parsed.monthlyTotalOverrides && typeof parsed.monthlyTotalOverrides === "object" ? parsed.monthlyTotalOverrides : {},
+            billAllValidatedRoutes: parsed.billAllValidatedRoutes && typeof parsed.billAllValidatedRoutes === "object" ? parsed.billAllValidatedRoutes : {}
           };
         }
       } catch {
@@ -240,7 +258,7 @@ export class ImageUsageStore {
       }
     }
     if (fs.existsSync(this.filePath) || fs.existsSync(backupPath)) throw new Error("Registro de consumo inválido. Restaure um backup antes de gravar novos dados.");
-    return { entries: [], defaultAmounts: {}, monthlyTotalOverrides: {} };
+    return { entries: [], defaultAmounts: {}, monthlyTotalOverrides: {}, billAllValidatedRoutes: {} };
   }
 
   private save() {
