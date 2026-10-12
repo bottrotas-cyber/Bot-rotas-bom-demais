@@ -10,6 +10,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  CircleDollarSign,
   Edit3,
   Gauge,
   Home,
@@ -3625,6 +3626,13 @@ function PanelApp() {
             </button>
           </div>
         ) : null}
+        <div className="client-balance-pill" aria-label="Valor a pagar neste mês">
+          <CircleDollarSign size={20} />
+          <span>
+            <small>A pagar neste mês</small>
+            <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+          </span>
+        </div>
         <div className="group-pill">
           <span>{snapshot.monitoringMode === "test" ? "Teste ativo" : "Grupo alvo"}</span>
           <strong>{snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel}</strong>
@@ -3715,8 +3723,8 @@ function PanelApp() {
             <div className="client-usage-head">
               <div className="client-usage-icon"><BrainCircuit size={22} /></div>
               <div>
-                <p className="panel-label">Análise inteligente</p>
-                <h2>Consumo de imagens</h2>
+                <p className="panel-label">Financeiro</p>
+                <h2>Consumo de rotas</h2>
               </div>
               <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
             </div>

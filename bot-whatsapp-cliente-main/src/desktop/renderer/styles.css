@@ -775,6 +775,37 @@ button {
   text-shadow: 0 0 24px rgba(255, 255, 255, 0.16);
 }
 
+.client-balance-pill {
+  min-width: 190px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid rgba(52, 211, 153, 0.5);
+  border-radius: 8px;
+  color: #ecfdf5;
+  background: linear-gradient(135deg, rgba(6, 78, 59, 0.88), rgba(5, 46, 22, 0.82));
+  box-shadow: 0 0 24px rgba(16, 185, 129, 0.13);
+}
+
+.client-balance-pill span {
+  display: grid;
+  gap: 1px;
+}
+
+.client-balance-pill small {
+  color: #a7f3d0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.client-balance-pill strong {
+  color: #fff;
+  font-size: 1.15rem;
+}
+
 .eyebrow,
 .panel-label {
   margin: 0;
@@ -6666,6 +6697,11 @@ body:has(.modal-backdrop) {
 
   .client-mode-banner {
     justify-content: space-between;
+  }
+
+  .client-balance-pill {
+    justify-content: center;
+    width: 100%;
   }
 
   .admin-console-header {
