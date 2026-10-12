@@ -97,20 +97,19 @@ export function selectPreferredNeighborhoodFromOcr(
   const detections: DetectedRouteCode[] = [];
   const selections: NeighborhoodSelection["selections"] = [];
   const selectedCodes = new Set<string>();
+  const normalizedMaxStops = Number.isFinite(Number(maxStops)) ? Math.max(0, Math.floor(Number(maxStops))) : 0;
+  const normalizedMaxPackages = Number.isFinite(Number(maxPackages)) ? Math.max(0, Math.floor(Number(maxPackages))) : 0;
   let firstFailure: Omit<NeighborhoodSelection, "detections" | "selections"> | undefined;
 
   for (const preference of configured) {
     const matches: Match[] = [];
     for (const [variant, variantRows] of rows.entries()) {
-      // One neighborhood can legitimately have multiple cages. The product
-      // sends one message, so each OCR treatment contributes only its first
-      // visual occurrence. Independent treatments must still agree on it.
+      // A neighborhood can legitimately have multiple cages. Read every row
+      // so the product can choose the cage with fewer stops instead of merely
+      // choosing the first occurrence in the screenshot.
       for (const row of variantRows) {
         const match = matchPreference(row, preference);
-        if (match) {
-          matches.push({ row, ...match, variant });
-          break;
-        }
+        if (match) matches.push({ row, ...match, variant });
       }
     }
     if (!matches.length) continue;
@@ -153,12 +152,34 @@ export function selectPreferredNeighborhoodFromOcr(
         confidence: confirmed.length ? Math.round(Math.min(...confirmed.map((match) => match.confidence))) : best.confidence,
         evidenceCount: evidence.size,
         variantCount: variants.length,
-        safeForAutomatic: codes.length === 1 && (evidence.size >= requiredEvidence || structuralSingleReading)
+        safeForAutomatic: evidence.size >= requiredEvidence || structuralSingleReading
       };
       return detection;
     });
     detections.push(...byCode);
-    const detection = byCode.find((candidate) => candidate.safeForAutomatic);
+    const safeCandidates = byCode.filter((candidate) => candidate.safeForAutomatic);
+    // A code seen by only one of several OCR treatments may be a conflicting
+    // reading of the same row. Keep blocking that ambiguity. When every code
+    // is independently safe, they are real separate cages for this bairro.
+    const hasUnconfirmedConflict = variants.length > 1 && byCode.some((candidate) => !candidate.safeForAutomatic);
+    const candidateWithinLimits = (candidate: DetectedRouteCode) => {
+      if (normalizedMaxStops && candidate.paradas !== undefined && candidate.paradas > normalizedMaxStops) return false;
+      if (normalizedMaxPackages && candidate.pacotes !== undefined && candidate.pacotes > normalizedMaxPackages) return false;
+      if (preference.conditionMax) {
+        const value = preference.conditionMetric === "packages" ? candidate.pacotes : candidate.paradas;
+        if (value !== undefined && value > preference.conditionMax) return false;
+      }
+      return true;
+    };
+    const eligibleCandidates = safeCandidates.filter(candidateWithinLimits);
+    const candidatesToRank = eligibleCandidates.length ? eligibleCandidates : safeCandidates;
+    const detection = hasUnconfirmedConflict ? undefined : [...candidatesToRank].sort((left, right) => {
+      if (left.paradas !== undefined && right.paradas !== undefined && left.paradas !== right.paradas) return left.paradas - right.paradas;
+      if (left.paradas !== undefined) return -1;
+      if (right.paradas !== undefined) return 1;
+      if (left.pacotes !== undefined && right.pacotes !== undefined && left.pacotes !== right.pacotes) return left.pacotes - right.pacotes;
+      return byCode.indexOf(left) - byCode.indexOf(right);
+    })[0];
     if (detection) {
       if (!selectedCodes.has(detection.code)) {
         selectedCodes.add(detection.code);
@@ -172,8 +193,6 @@ export function selectPreferredNeighborhoodFromOcr(
     }
   }
   if (selections.length) {
-    const normalizedMaxStops = Number.isFinite(Number(maxStops)) ? Math.max(0, Math.floor(Number(maxStops))) : 0;
-    const normalizedMaxPackages = Number.isFinite(Number(maxPackages)) ? Math.max(0, Math.floor(Number(maxPackages))) : 0;
     const exceedsIndividualCondition = (item: NeighborhoodSelection["selections"][number]) => {
       const preference = configured.find((candidate) => candidate.index === item.preferenceIndex);
       if (!preference?.conditionMax) return false;

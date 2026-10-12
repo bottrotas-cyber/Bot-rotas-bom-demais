@@ -521,6 +521,33 @@ test("aceita preferencia Flamboyant com ou sem prefixo de cidade", () => {
   }
 });
 
+test("mesmo bairro com varias gaiolas escolhe a de menor numero de paradas", () => {
+  const source = reading([
+    line("ROTA", 10, 20), line("AT", 10, 180), line("PARADAS", 10, 430), line("PACOTES", 10, 520), line("CLUSTER", 10, 620),
+    line("F-5", 60, 20), line("AT20261011BILVK", 60, 180), line("59", 60, 430), line("118", 60, 520), line("Campos - Flamboyant", 60, 620),
+    line("F-9", 100, 20), line("AT20261011BILVL", 100, 180), line("15", 100, 430), line("119", 100, 520), line("Campos - Flamboyant", 100, 620)
+  ]);
+  const result = selectPreferredNeighborhoodFromOcr(source, [{ bairro: "Campos - Flamboyant" }]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "F-9");
+  assert.equal(result.detection.paradas, 15);
+  assert.ok(result.detections.some((detection) => detection.code === "F-5" && detection.paradas === 59));
+});
+
+test("entre gaiolas do mesmo bairro escolhe a menor que respeita a condicao", () => {
+  const source = reading([
+    line("ROTA", 10, 20), line("AT", 10, 180), line("PARADAS", 10, 430), line("PACOTES", 10, 520), line("CLUSTER", 10, 620),
+    line("F-5", 60, 20), line("AT20261011BILVK", 60, 180), line("59", 60, 430), line("118", 60, 520), line("Campos - Flamboyant", 60, 620),
+    line("F-9", 100, 20), line("AT20261011BILVL", 100, 180), line("15", 100, 430), line("119", 100, 520), line("Campos - Flamboyant", 100, 620)
+  ]);
+  const result = selectPreferredNeighborhoodFromOcr(source, [{
+    bairro: "Flamboyant", conditionMetric: "packages", conditionMax: 118
+  }]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "F-5");
+  assert.equal(result.detection.pacotes, 118);
+});
+
 test("nao remove Campos quando faz parte do nome real do bairro", () => {
   const source = reading([
     line("ROTA", 10, 20), line("AT", 10, 180), line("PARADAS", 10, 430), line("PACOTES", 10, 520), line("BAIRRO", 10, 1050),
