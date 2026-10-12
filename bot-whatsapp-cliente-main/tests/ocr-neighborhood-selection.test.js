@@ -503,6 +503,34 @@ test("recupera paradas pela geometria das colunas na linha J-13", () => {
   assert.equal(result.detection.paradas, 44);
 });
 
+test("aceita preferencia Flamboyant com ou sem prefixo de cidade", () => {
+  const source = reading([
+    line("ROTA", 10, 20), line("AT", 10, 180), line("PARADAS", 10, 430), line("PACOTES", 10, 520),
+    line("CLUSTER", 10, 620), line("BAIRRO", 10, 1050),
+    line("F-5", 60, 20), line("AT20261011BILVK", 60, 180), line("59", 60, 430), line("118", 60, 520),
+    line("Campos - Flamboyant", 60, 620), line("Flamboyant", 60, 1050)
+  ]);
+
+  for (const bairro of ["Campos - Flamboyant", "Flamboyant"]) {
+    const result = selectPreferredNeighborhoodFromOcr(source, [{ bairro }]);
+    assert.equal(result.status, "selected", bairro);
+    assert.equal(result.detection.code, "F-5", bairro);
+    assert.equal(result.detection.bairro, "Flamboyant", bairro);
+    assert.equal(result.detection.paradas, 59, bairro);
+    assert.equal(result.detection.pacotes, 118, bairro);
+  }
+});
+
+test("nao remove Campos quando faz parte do nome real do bairro", () => {
+  const source = reading([
+    line("ROTA", 10, 20), line("AT", 10, 180), line("PARADAS", 10, 430), line("PACOTES", 10, 520), line("BAIRRO", 10, 1050),
+    line("H-19", 60, 20), line("AT20261011BILVX", 60, 180), line("34", 60, 430), line("103", 60, 520), line("Jardins de Campos", 60, 1050)
+  ]);
+  const result = selectPreferredNeighborhoodFromOcr(source, [{ bairro: "Jardins de Campos" }]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.bairro, "Jardins de Campos");
+});
+
 test("uma leitura estrutural completa libera J-13 sem esperar tratamentos extras", () => {
   const source = reading([
     line("J-13", 60, 20), line("AT20261007ARASB", 60, 180),

@@ -56,6 +56,21 @@ export function normalizeNeighborhoodIdentity(value: string) {
 }
 
 /**
+ * Older configurations sometimes stored the CLUSTER label in the bairro
+ * field (for example "Campos - Flamboyant"). Screenshots with a BAIRRO
+ * column expose only "Flamboyant", so compare the actual neighborhood while
+ * retaining legitimate names such as "Jardins de Campos" untouched.
+ */
+export function canonicalConfiguredNeighborhood(value: string) {
+  const compact = String(value || "").trim().replace(/\s+/g, " ");
+  const withoutKnownCityPrefix = compact.replace(
+    /^(?:Campos(?:\s+dos\s+Goytacazes)?|SJB|S[aã]o\s+Jo[aã]o\s+da\s+Barra|SFI|S[aã]o\s+Francisco\s+de\s+Itabapoana)\s*[-\u2013\u2014|:]\s*/i,
+    ""
+  ).trim();
+  return withoutKnownCityPrefix || compact;
+}
+
+/**
  * Selection deliberately does not use fuzzy matching or the romaneio. A row
  * must contain the complete configured city and neighborhood, and two OCR
  * treatments must agree on its literal cage code. Uncertainty in a preferred
@@ -69,7 +84,7 @@ export function selectPreferredNeighborhoodFromOcr(
 ): NeighborhoodSelection {
   const configured = preferences.map((preference, index) => ({
     cidade: String(preference.cidade || "").trim(),
-    bairro: String(preference.bairro || "").trim(),
+    bairro: canonicalConfiguredNeighborhood(preference.bairro),
     index,
     enabled: preference.enabled !== false,
     conditionMetric: preference.conditionMetric,

@@ -10,7 +10,7 @@ import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { combineRouteImageBatch, DetectedRouteCode, extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findAllPlannedAtCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection, reconcileGaiolaDetectionsWithRomaneio } from "./ocr";
 import { readRouteImageOcrWithoutBlockingSocket, warmupIsolatedOcrWorker } from "./ocrIsolated";
-import { findManualRouteCandidatesFromOcr, selectPreferredNeighborhoodFromOcr } from "./ocrNeighborhoodSelection";
+import { canonicalConfiguredNeighborhood, findManualRouteCandidatesFromOcr, selectPreferredNeighborhoodFromOcr } from "./ocrNeighborhoodSelection";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { OcrAnalysisHistoryStore } from "./ocrAnalysisHistoryStore";
 import { RouteStore } from "./routeStore";
@@ -3045,7 +3045,8 @@ export class BotService extends EventEmitter {
     );
     for (const option of options) {
       const preference = preferences.find((candidate) =>
-        normalizarTexto(candidate.bairro) === normalizarTexto(option.bairro)
+        normalizarTexto(canonicalConfiguredNeighborhood(candidate.bairro)) ===
+          normalizarTexto(canonicalConfiguredNeighborhood(option.bairro))
       );
       if (!preference?.conditionMetric || !(Number(preference.conditionMax) > 0)) continue;
       const label = preference.conditionMetric === "packages" ? "pacotes" : "paradas";
