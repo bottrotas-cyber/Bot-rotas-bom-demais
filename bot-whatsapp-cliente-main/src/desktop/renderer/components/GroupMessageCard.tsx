@@ -24,7 +24,9 @@ type Props = {
     targetDispatchMode?: "manual" | "ocr",
     ocrCageMessageLimit?: number,
     ocrMaxStops?: number,
-    ocrMaxPackages?: number
+    ocrMaxPackages?: number,
+    ocrRouteChoiceMode?: BotConfig["ocrRouteChoiceMode"],
+    ocrRouteChoiceMetric?: BotConfig["ocrRouteChoiceMetric"]
   ) => void;
   onSaveManual?: (
     group: string,
@@ -78,6 +80,8 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   const [ocrMessageLimit, setOcrMessageLimit] = useState(3);
   const [ocrMaxStops, setOcrMaxStops] = useState(0);
   const [ocrMaxPackages, setOcrMaxPackages] = useState(0);
+  const [ocrRouteChoiceMode, setOcrRouteChoiceMode] = useState<BotConfig["ocrRouteChoiceMode"]>("quantity");
+  const [ocrRouteChoiceMetric, setOcrRouteChoiceMetric] = useState<BotConfig["ocrRouteChoiceMetric"]>("stops");
   const [manualCodes, setManualCodes] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [messageCount, setMessageCount] = useState(15);
@@ -112,6 +116,8 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     setOcrMessageLimit(Math.max(1, Math.min(3, Number(config.ocrCageMessageLimit) || 3)));
     setOcrMaxStops(Math.max(0, Math.min(999, Number(config.ocrMaxStops) || 0)));
     setOcrMaxPackages(Math.max(0, Math.min(999, Number(config.ocrMaxPackages) || 0)));
+    setOcrRouteChoiceMode(config.ocrRouteChoiceMode || "quantity");
+    setOcrRouteChoiceMetric(config.ocrRouteChoiceMetric || "stops");
     setManualCodes((config.codigosMensagensAlvo || []).join("\n"));
     setMessageCount(config.testMessageCount || 15);
     setIntervalMs(config.testMessageIntervalMs || 0);
@@ -126,6 +132,8 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     config.ocrCageMessageLimit,
     config.ocrMaxStops,
     config.ocrMaxPackages,
+    config.ocrRouteChoiceMode,
+    config.ocrRouteChoiceMetric,
     isTarget,
     savedCodesKey,
     savedPreferencesKey
@@ -149,7 +157,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
 
     if (!value || !senderName.trim() || !nextCodes.length || (isImageTarget && (hasIncompletePreference || (startAfterSave && !getEnabledNeighborhoodPreferences(nextRoutes).length)))) return;
     setCodes(nextCodes.join("\n"));
-    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes, isImageTarget ? "ocr" : "manual", ocrMessageLimit, ocrMaxStops, ocrMaxPackages);
+    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes, isImageTarget ? "ocr" : "manual", ocrMessageLimit, ocrMaxStops, ocrMaxPackages, ocrRouteChoiceMode, ocrRouteChoiceMetric);
   }
 
   function submitManual(event: Pick<FormEvent, "preventDefault">) {
@@ -228,7 +236,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
         {isImageTarget ? (
           <div className="ocr-primary-copy">
             <strong>Bairros monitorados</strong>
-            <span>O bot encontra os bairros da lista e envia primeiro a rota com menos paradas.</span>
+            <span>O bot encontra os bairros da lista e aplica o critério de escolha configurado abaixo.</span>
           </div>
         ) : null}
 
@@ -255,6 +263,28 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </label>
               <small>Se a imagem tiver menos bairros confirmados, o bot envia somente os encontrados.</small>
             </div>
+            <div className="settings-grid compact-settings">
+              <label>
+                Cérebro do bot
+                <select aria-label="Critério de escolha das rotas" value={ocrRouteChoiceMode} disabled={busy} onChange={(event) => setOcrRouteChoiceMode(event.target.value as BotConfig["ocrRouteChoiceMode"])}>
+                  <option value="preference">Ordem de preferência</option>
+                  <option value="quantity">Menor quantidade</option>
+                </select>
+              </label>
+              <small>{ocrRouteChoiceMode === "preference" ? "O primeiro bairro válido do seu ranking será enviado antes dos demais." : "O bot compara as rotas válidas e envia primeiro a que tiver o menor número."}</small>
+            </div>
+            {ocrRouteChoiceMode === "quantity" ? (
+              <div className="settings-grid compact-settings">
+                <label>
+                  Quantidade usada na escolha
+                  <select aria-label="Quantidade usada na escolha" value={ocrRouteChoiceMetric} disabled={busy} onChange={(event) => setOcrRouteChoiceMetric(event.target.value as BotConfig["ocrRouteChoiceMetric"])}>
+                    <option value="stops">Menos paradas</option>
+                    <option value="packages">Menos pacotes</option>
+                  </select>
+                </label>
+                <small>Se essa quantidade não estiver legível, a ordem de preferência decide.</small>
+              </div>
+            ) : null}
             <div className="settings-grid compact-settings">
               <label>
                 Limite geral de paradas

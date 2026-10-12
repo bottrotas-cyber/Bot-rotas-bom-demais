@@ -80,7 +80,9 @@ export function selectPreferredNeighborhoodFromOcr(
   ocr: RouteOcrResult,
   preferences: MonitoredRoute[],
   maxStops = 0,
-  maxPackages = 0
+  maxPackages = 0,
+  choiceMode: "preference" | "quantity" = "quantity",
+  choiceMetric: "stops" | "packages" = "stops"
 ): NeighborhoodSelection {
   const configured = preferences.map((preference, index) => ({
     cidade: String(preference.cidade || "").trim(),
@@ -174,10 +176,12 @@ export function selectPreferredNeighborhoodFromOcr(
     const eligibleCandidates = safeCandidates.filter(candidateWithinLimits);
     const candidatesToRank = eligibleCandidates.length ? eligibleCandidates : safeCandidates;
     const detection = hasUnconfirmedConflict ? undefined : [...candidatesToRank].sort((left, right) => {
-      if (left.paradas !== undefined && right.paradas !== undefined && left.paradas !== right.paradas) return left.paradas - right.paradas;
-      if (left.paradas !== undefined) return -1;
-      if (right.paradas !== undefined) return 1;
-      if (left.pacotes !== undefined && right.pacotes !== undefined && left.pacotes !== right.pacotes) return left.pacotes - right.pacotes;
+      const metric = choiceMode === "quantity" ? choiceMetric : "stops";
+      const leftValue = metric === "packages" ? left.pacotes : left.paradas;
+      const rightValue = metric === "packages" ? right.pacotes : right.paradas;
+      if (leftValue !== undefined && rightValue !== undefined && leftValue !== rightValue) return leftValue - rightValue;
+      if (leftValue !== undefined) return -1;
+      if (rightValue !== undefined) return 1;
       return byCode.indexOf(left) - byCode.indexOf(right);
     })[0];
     if (detection) {
@@ -213,16 +217,17 @@ export function selectPreferredNeighborhoodFromOcr(
       selections: []
     };
     const orderedSelections = [...eligibleSelections].sort((left, right) => {
-      const leftStops = left.detection.paradas;
-      const rightStops = right.detection.paradas;
-      if (leftStops !== undefined && rightStops !== undefined && leftStops !== rightStops) return leftStops - rightStops;
-      if (leftStops !== undefined) return -1;
-      if (rightStops !== undefined) return 1;
+      if (choiceMode === "preference") return left.preferenceIndex - right.preferenceIndex;
+      const leftValue = choiceMetric === "packages" ? left.detection.pacotes : left.detection.paradas;
+      const rightValue = choiceMetric === "packages" ? right.detection.pacotes : right.detection.paradas;
+      if (leftValue !== undefined && rightValue !== undefined && leftValue !== rightValue) return leftValue - rightValue;
+      if (leftValue !== undefined) return -1;
+      if (rightValue !== undefined) return 1;
       return left.preferenceIndex - right.preferenceIndex;
     });
     return {
       status: "selected", detection: orderedSelections[0].detection, preferenceIndex: orderedSelections[0].preferenceIndex,
-      reason: `${orderedSelections.length} bairro(s) liberado(s), começando pelo menor número de paradas${normalizedMaxStops || normalizedMaxPackages ? ` e respeitando ${formatLimits(normalizedMaxStops, normalizedMaxPackages)}` : ""}.${excludedCount ? ` ${excludedCount} rota(s) acima do limite foram descartadas; a próxima preferência elegível foi usada.` : ""}`,
+      reason: `${orderedSelections.length} bairro(s) liberado(s), seguindo ${choiceMode === "preference" ? "a ordem de preferência" : `o menor número de ${choiceMetric === "packages" ? "pacotes" : "paradas"}`}${normalizedMaxStops || normalizedMaxPackages ? ` e respeitando ${formatLimits(normalizedMaxStops, normalizedMaxPackages)}` : ""}.${excludedCount ? ` ${excludedCount} rota(s) acima do limite foram descartadas; a próxima preferência elegível foi usada.` : ""}`,
       detections, selections: orderedSelections
     };
   }

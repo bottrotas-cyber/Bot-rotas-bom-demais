@@ -27,7 +27,9 @@ export const DEFAULT_CONFIG: BotConfig = {
   ocrDesiredCages: [],
   ocrCageMessageLimit: 3,
   ocrMaxStops: 0,
-  ocrMaxPackages: 0
+  ocrMaxPackages: 0,
+  ocrRouteChoiceMode: "quantity",
+  ocrRouteChoiceMetric: "stops"
 };
 
 export class ConfigStore {
@@ -152,6 +154,8 @@ export class ConfigStore {
         ? input.ocrCageMessageLimit : DEFAULT_CONFIG.ocrCageMessageLimit, 1, 3, DEFAULT_CONFIG.ocrCageMessageLimit),
       ocrMaxStops: this.clampNumber(input.ocrMaxStops, 0, 999, DEFAULT_CONFIG.ocrMaxStops),
       ocrMaxPackages: this.clampNumber(input.ocrMaxPackages, 0, 999, DEFAULT_CONFIG.ocrMaxPackages),
+      ocrRouteChoiceMode: input.ocrRouteChoiceMode === "preference" ? "preference" : "quantity",
+      ocrRouteChoiceMetric: input.ocrRouteChoiceMetric === "packages" ? "packages" : "stops",
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)
         ? input.codigosMensagensAlvo.filter((item) => typeof item === "string" && item.trim())

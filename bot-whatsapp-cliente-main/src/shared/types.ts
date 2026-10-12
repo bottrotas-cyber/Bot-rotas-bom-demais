@@ -59,6 +59,9 @@ export type BotConfig = {
   // Zero desativa; quando positivo vale para todos os bairros monitorados.
   ocrMaxStops: number;
   ocrMaxPackages: number;
+  /** How eligible neighborhoods are ordered before dispatch. */
+  ocrRouteChoiceMode: "preference" | "quantity";
+  ocrRouteChoiceMetric: "stops" | "packages";
 };
 
 export type DispatchPriorityProfile = {
@@ -682,6 +685,8 @@ export type SaveTargetMessageSettingsPayload = {
   ocrCageMessageLimit?: number;
   ocrMaxStops?: number;
   ocrMaxPackages?: number;
+  ocrRouteChoiceMode?: "preference" | "quantity";
+  ocrRouteChoiceMetric?: "stops" | "packages";
 };
 
 export type GeneralSettingsPayload = {

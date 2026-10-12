@@ -192,7 +192,9 @@ const emptySnapshot: BotSnapshot = {
     ocrDesiredCages: [],
     ocrCageMessageLimit: 3,
     ocrMaxStops: 0,
-    ocrMaxPackages: 0
+    ocrMaxPackages: 0,
+    ocrRouteChoiceMode: "quantity",
+    ocrRouteChoiceMetric: "stops"
   },
   groups: [],
   readinessChecks: [],
@@ -3221,7 +3223,7 @@ function PanelApp() {
     return /OCR|IA|imagem|foto|romaneio|rota\(s\)|rotas encontradas|Ranking de rotas|Cliente confirmou|gaiola/i.test(message);
   }
 
-  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual", ocrCageMessageLimit = 3, ocrMaxStops = 0, ocrMaxPackages = 0) {
+  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual", ocrCageMessageLimit = 3, ocrMaxStops = 0, ocrMaxPackages = 0, ocrRouteChoiceMode: BotConfig["ocrRouteChoiceMode"] = "quantity", ocrRouteChoiceMetric: BotConfig["ocrRouteChoiceMetric"] = "stops") {
     const selectedGroupName = groupName || group;
     const isImageMode = targetDispatchMode === "ocr";
     const preferences = isImageMode ? normalizeNeighborhoodPreferences(monitoredRoutes || codes.map((bairro) => ({ cidade: "", bairro }))) : [];
@@ -3236,7 +3238,7 @@ function PanelApp() {
     setConfirmation({
       title: startAfterSave ? (isImageMode ? "Salvar e iniciar imagem" : "Salvar e iniciar manual") : isImageMode ? "Salvar bot imagem" : "Salvar mensagens",
       message: `Grupo alvo: ${selectedGroupName}`,
-      details: isImageMode ? [...messages, `Serão enviadas até ${ocrCageMessageLimit} mensagens, começando pelas rotas com menos paradas.`, ocrMaxStops ? `Limite geral: ${ocrMaxStops} paradas.` : "Sem limite geral de paradas.", ocrMaxPackages ? `Limite geral: ${ocrMaxPackages} pacotes.` : "Sem limite geral de pacotes."] : messages,
+      details: isImageMode ? [...messages, ocrRouteChoiceMode === "preference" ? "Cérebro: seguir a ordem de preferência dos bairros." : `Cérebro: escolher primeiro a rota com menos ${ocrRouteChoiceMetric === "packages" ? "pacotes" : "paradas"}.`, `Serão enviadas até ${ocrCageMessageLimit} mensagens.`, ocrMaxStops ? `Limite geral: ${ocrMaxStops} paradas.` : "Sem limite geral de paradas.", ocrMaxPackages ? `Limite geral: ${ocrMaxPackages} pacotes.` : "Sem limite geral de pacotes."] : messages,
       confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar",
       onConfirm: async () => {
         await runAction(async () => {
@@ -3249,7 +3251,9 @@ function PanelApp() {
             targetDispatchMode,
             ocrCageMessageLimit,
             ocrMaxStops,
-            ocrMaxPackages
+            ocrMaxPackages,
+            ocrRouteChoiceMode,
+            ocrRouteChoiceMetric
           });
           setGroupEditor(undefined);
           return startAfterSave ? (isImageMode ? botApi.startImageMonitoring() : botApi.startMonitoring()) : botApi.getSnapshot();

@@ -43,6 +43,26 @@ test("ordena bairros confirmados pela menor quantidade de paradas", () => {
   assert.deepEqual(result.selections.map((item) => item.detection.code), ["B-12", "F-14"]);
 });
 
+test("cerebro por preferencia respeita o ranking mesmo com mais paradas", () => {
+  const result = selectPreferredNeighborhoodFromOcr(consensus([
+    "F-14 AT2026101100001 59 118 Campos Parque Rodoviário",
+    "B-12 AT2026101100002 15 119 Campos Centro"
+  ]), preferred, 0, 0, "preference", "stops");
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "F-14");
+  assert.deepEqual(result.selections.map((item) => item.detection.code), ["F-14", "B-12"]);
+});
+
+test("cerebro por quantidade permite escolher menos pacotes", () => {
+  const result = selectPreferredNeighborhoodFromOcr(consensus([
+    "F-14 AT2026101100001 15 119 Campos Parque Rodoviário",
+    "B-12 AT2026101100002 59 90 Campos Centro"
+  ]), preferred, 0, 0, "quantity", "packages");
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "B-12");
+  assert.equal(result.detection.pacotes, 90);
+});
+
 test("passa à próxima preferência apenas quando a anterior está ausente", () => {
   const result = selectPreferredNeighborhoodFromOcr(consensus(["B-12 Campos dos Goytacazes Centro"]), preferred);
   assert.equal(result.status, "selected");

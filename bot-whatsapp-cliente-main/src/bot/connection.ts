@@ -1688,7 +1688,7 @@ export class BotService extends EventEmitter {
     this.logger.success("Mensagens do grupo alvo atualizadas.");
   }
 
-  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: MonitoredRoute[], targetDispatchMode?: BotConfig["targetDispatchMode"], ocrCageMessageLimit?: number, ocrMaxStops?: number, ocrMaxPackages?: number) {
+  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: MonitoredRoute[], targetDispatchMode?: BotConfig["targetDispatchMode"], ocrCageMessageLimit?: number, ocrMaxStops?: number, ocrMaxPackages?: number, ocrRouteChoiceMode?: BotConfig["ocrRouteChoiceMode"], ocrRouteChoiceMetric?: BotConfig["ocrRouteChoiceMetric"]) {
     if (typeof senderName !== "string" || !Array.isArray(codes) || codes.some((item) => typeof item !== "string")) throw new Error("Nome e códigos de mensagem inválidos.");
     // Update target (alvo) message settings. Do NOT reset warmup completion.
     this.codigosEscolhidos = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
@@ -1712,6 +1712,8 @@ export class BotService extends EventEmitter {
       ...(ocrCageMessageLimit !== undefined ? { ocrCageMessageLimit } : {}),
       ...(ocrMaxStops !== undefined ? { ocrMaxStops } : {}),
       ...(ocrMaxPackages !== undefined ? { ocrMaxPackages } : {}),
+      ...(ocrRouteChoiceMode ? { ocrRouteChoiceMode } : {}),
+      ...(ocrRouteChoiceMetric ? { ocrRouteChoiceMetric } : {}),
       ...(targetDispatchMode ? { targetDispatchMode } : {})
     });
     this.cancelPendingRouteImageBatch();
@@ -2630,7 +2632,7 @@ export class BotService extends EventEmitter {
       }
       if (!isCurrent()) return;
       let ocr = combineRouteImageBatch(readings);
-      let decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages);
+      let decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages, config.ocrRouteChoiceMode, config.ocrRouteChoiceMetric);
       const selectedMetrics = decision.selections.map(({ detection }) => detection);
       const mixedStops = selectedMetrics.some(({ paradas }) => paradas !== undefined)
         && selectedMetrics.some(({ paradas }) => paradas === undefined);
@@ -2647,7 +2649,7 @@ export class BotService extends EventEmitter {
         }
         if (!isCurrent()) return;
         ocr = combineRouteImageBatch(readings);
-        decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages);
+        decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages, config.ocrRouteChoiceMode, config.ocrRouteChoiceMetric);
       }
       await previewPromise;
       const ocrFinishedAtMs = Date.now();
