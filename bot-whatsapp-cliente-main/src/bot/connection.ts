@@ -2817,6 +2817,26 @@ export class BotService extends EventEmitter {
     const activeGroup = this.getActiveMonitoringGroup();
     if (!activeGroup.jid || !this.pendingOcrMessages.length) return false;
 
+    if (trigger === "automatic") {
+      const violation = this.findOcrConditionViolation(this.lastOcrInsight?.analysisOptions || []);
+      if (violation) {
+        this.pendingOcrMessages = [];
+        this.preparedMessages = [];
+        this.preparedRelayMessages = [];
+        this.pendingOcrReconnectDispatch = undefined;
+        this.ocrRouteSelection = {
+          ...this.ocrRouteSelection,
+          status: "error",
+          dispatchState: "failed",
+          message: `${violation} Envio automático bloqueado pela condição do bairro.`
+        };
+        this.rememberCurrentOcrAnalysis();
+        this.logger.warning(`[IA] ${violation} Envio automático bloqueado.`);
+        this.emitSnapshot();
+        return false;
+      }
+    }
+
     const analysisId = this.lastOcrInsight?.analysisId;
     const previousDispatch = trigger === "automatic" && analysisId
       ? this.routeStore.all().find((route) => route.ocr?.analysisId === analysisId && route.confirmedCount > 0)
@@ -2989,6 +3009,8 @@ export class BotService extends EventEmitter {
 
   private applyOcrRouteSelection(selected: OcrRouteOption[], mode: "manual" | "automatic") {
     const config = this.configStore.load();
+    const violation = mode === "automatic" ? this.findOcrConditionViolation(selected, config) : undefined;
+    if (violation) throw new Error(`${violation} Envio automático bloqueado pela condição do bairro.`);
     const messages = selected
       .map((option) => `${config.nomeEnvio} ${option.gaiola}`.trim())
       .filter(Boolean);
@@ -3015,6 +3037,24 @@ export class BotService extends EventEmitter {
     this.logger.success(mode === "manual"
       ? `[ROMANEIO] Cliente confirmou ${selected.length} rota(s): ${messages.join(" | ")}.`
       : `[IA] Bairro preferido selecionado: ${messages.join(" | ")}.`);
+  }
+
+  private findOcrConditionViolation(options: OcrRouteOption[], config = this.configStore.load()) {
+    const preferences = (config.rotasMonitoradasDetalhadas || []).filter((preference) =>
+      preference.enabled !== false && preference.conditionMetric && Number(preference.conditionMax) > 0
+    );
+    for (const option of options) {
+      const preference = preferences.find((candidate) =>
+        normalizarTexto(candidate.bairro) === normalizarTexto(option.bairro)
+      );
+      if (!preference?.conditionMetric || !(Number(preference.conditionMax) > 0)) continue;
+      const label = preference.conditionMetric === "packages" ? "pacotes" : "paradas";
+      const value = preference.conditionMetric === "packages" ? option.pacotes : option.paradas;
+      if (value !== undefined && value > Number(preference.conditionMax)) {
+        return `${option.bairro}: ${value} ${label}, acima do máximo individual de ${preference.conditionMax}.`;
+      }
+    }
+    return undefined;
   }
 
   private isExactRomaneioAtDetection(detected: { code?: string; plannedAt?: string; confidence?: number }) {

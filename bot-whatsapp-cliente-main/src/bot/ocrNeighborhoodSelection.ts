@@ -174,7 +174,7 @@ export function selectPreferredNeighborhoodFromOcr(
       status: "unsafe",
       reason: normalizedMaxStops || normalizedMaxPackages
         ? `Todos os bairros encontrados ultrapassaram ${formatLimits(normalizedMaxStops, normalizedMaxPackages)}. Nenhuma mensagem foi enviada.`
-        : "Todos os bairros encontrados ultrapassaram suas condiÃ§Ãµes individuais. Nenhuma mensagem foi enviada.",
+        : "Todos os bairros encontrados ultrapassaram suas condições individuais. Nenhuma mensagem foi enviada.",
       detections,
       selections: []
     };

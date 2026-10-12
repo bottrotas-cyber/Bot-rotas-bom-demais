@@ -55,6 +55,21 @@ function createBot(t, email = "client@test.com") {
   return { bot, states };
 }
 
+test("trava final bloqueia rota acima da condição individual salva", (t) => {
+  const { bot } = createBot(t);
+  bot.configStore.save({
+    rotasMonitoradasDetalhadas: [
+      { cidade: "", bairro: "Flamboyant", enabled: true, conditionMetric: "stops", conditionMax: 50 }
+    ]
+  });
+  assert.match(bot.findOcrConditionViolation([
+    { bairro: "Flamboyant", gaiola: "F-5", paradas: 57, pacotes: 118 }
+  ]), /57 paradas.*máximo individual de 50/);
+  assert.equal(bot.findOcrConditionViolation([
+    { bairro: "Flamboyant", gaiola: "F-9", paradas: 50, pacotes: 119 }
+  ]), undefined);
+});
+
 function mockReading(t, callback) {
   const original = isolated.readRouteImageOcrWithoutBlockingSocket;
   isolated.readRouteImageOcrWithoutBlockingSocket = callback;
