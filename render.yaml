@@ -3,7 +3,7 @@ services:
     name: bot-whatsapp-painel
     runtime: docker
     rootDir: bot-whatsapp-cliente-main
-    plan: 2c-4g
+    plan: 8c-32g
     healthCheckPath: /api/ping
     envVars:
       - key: NODE_ENV
@@ -13,7 +13,13 @@ services:
       - key: PORT
         value: "10000"
       - key: OCR_GLOBAL_CONCURRENCY
-        value: "2"
+        value: "8"
+      - key: OCR_TURBO_MODE
+        value: "true"
+      - key: OCR_VARIANT_CONCURRENCY
+        value: "4"
+      - key: UV_THREADPOOL_SIZE
+        value: "16"
       - key: BOT_PERFORMANCE_PROFILE
         value: high
       - key: BOT_EAGER_WORKERS
@@ -33,4 +39,4 @@ services:
     disk:
       name: bot-whatsapp-data
       mountPath: /data
-      sizeGB: 3
+      sizeGB: 5

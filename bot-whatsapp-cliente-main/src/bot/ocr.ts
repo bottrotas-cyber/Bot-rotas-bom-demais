@@ -51,6 +51,11 @@ export type DetectedRouteCode = {
 let tesseractJsWorkerPromise: ReturnType<typeof createWorker> | undefined;
 let tesseractJsRecognitionQueue: Promise<void> = Promise.resolve();
 let nativeTesseractAvailable: boolean | undefined;
+const OCR_TURBO_MODE = process.env.OCR_TURBO_MODE === "true";
+const OCR_VARIANT_CONCURRENCY = Math.max(1, Math.min(5,
+  Number.parseInt(process.env.OCR_VARIANT_CONCURRENCY || (OCR_TURBO_MODE ? "4" : "3"), 10) || 3
+));
+const OCR_FALLBACK_BATCH_SIZE = OCR_TURBO_MODE ? 2 : 1;
 
 export function normalizeOcrText(text: string) {
   return text
@@ -118,10 +123,11 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
     if (fastReadingCount < selectedVariants.length) {
       // Os tratamentos de fallback são progressivos. Assim que uma leitura
       // adicional fecha o consenso, evitamos gastar CPU nas demais imagens.
-      for (const variant of selectedVariants.slice(fastReadingCount)) {
-        const [attempt] = await runOcrVariants([variant]);
-        if (attempt?.reading) readings = [...readings, attempt.reading];
-        if (attempt?.error) errors = [...errors, attempt.error];
+      const remainingVariants = selectedVariants.slice(fastReadingCount);
+      for (let index = 0; index < remainingVariants.length; index += OCR_FALLBACK_BATCH_SIZE) {
+        const fallbackAttempts = await runOcrVariants(remainingVariants.slice(index, index + OCR_FALLBACK_BATCH_SIZE));
+        readings = [...readings, ...fallbackAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
+        errors = [...errors, ...fallbackAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
         if (options.fastFirst && canUseFastOcrResult(readings)) break;
       }
     }
@@ -143,7 +149,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
 }
 
 function runOcrVariants(items: Awaited<ReturnType<typeof createPreprocessedImages>>) {
-  return mapWithConcurrency(items, 3, async (variant) => {
+  return mapWithConcurrency(items, OCR_VARIANT_CONCURRENCY, async (variant) => {
     try {
       return { reading: await readSingleRouteImageOcr(variant.path, variant.label, variant.psm) };
     } catch (error) {

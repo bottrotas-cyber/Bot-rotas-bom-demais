@@ -2561,6 +2561,7 @@ export class BotService extends EventEmitter {
     const analysisStartedAt = new Date(analysisStartedAtMs).toISOString();
     let imageDirectory: string | undefined;
     let imagePreviewUrl: string | undefined;
+    let previewPromise: Promise<void> = Promise.resolve();
     let dispatchRaceReady = false;
     const isCurrent = () => sequence === this.latestRouteImageSequence && this.monitoringEnabled && this.configStore.load().targetDispatchMode === "ocr";
     const reportState = (state: DispatchRaceEventState) => this.dispatchRaceEventReporter?.({
@@ -2602,17 +2603,21 @@ export class BotService extends EventEmitter {
       }
       // The OCR keeps using the original complete image. This compact copy is
       // only for visual confirmation in the panel and never feeds detection.
-      try {
-        const { default: sharp } = await import("sharp");
-        const preview = await sharp(imagePaths[0]).rotate().resize({ width: 960, withoutEnlargement: true })
-          .jpeg({ quality: 60, mozjpeg: true }).toBuffer();
-        imagePreviewUrl = `data:image/jpeg;base64,${preview.toString("base64")}`;
-        this.ocrRouteSelection = { ...this.ocrRouteSelection, imagePreviewUrl };
-        this.emitSnapshot();
-      } catch (error) {
-        this.logger.warning(`NÃ£o consegui gerar a prÃ©via da imagem: ${this.getErrorMessage(error)}`);
-      }
       const downloadFinishedAtMs = Date.now();
+      // A prévia é apenas visual e não precisa bloquear o início da IA. No
+      // perfil dedicado, Sharp trabalha em paralelo enquanto o OCR lê a foto.
+      previewPromise = (async () => {
+        try {
+          const { default: sharp } = await import("sharp");
+          const preview = await sharp(imagePaths[0]).rotate().resize({ width: 960, withoutEnlargement: true })
+            .jpeg({ quality: 60, mozjpeg: true }).toBuffer();
+          imagePreviewUrl = `data:image/jpeg;base64,${preview.toString("base64")}`;
+          this.ocrRouteSelection = { ...this.ocrRouteSelection, imagePreviewUrl };
+          this.emitSnapshot();
+        } catch (error) {
+          this.logger.warning(`Não consegui gerar a prévia da imagem: ${this.getErrorMessage(error)}`);
+        }
+      })();
       let readings = [];
       for (const imagePath of imagePaths) {
         if (!isCurrent()) return;
@@ -2644,6 +2649,7 @@ export class BotService extends EventEmitter {
         ocr = combineRouteImageBatch(readings);
         decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages);
       }
+      await previewPromise;
       const ocrFinishedAtMs = Date.now();
       const comparedAt = Date.now();
       const timing = {
@@ -2748,6 +2754,7 @@ export class BotService extends EventEmitter {
       this.emitSnapshot();
       this.logger.warning(`Análise da IA falhou: ${this.getErrorMessage(error)}`);
     } finally {
+      await previewPromise;
       if (!dispatchRaceReady || !isCurrent()) reportState("unavailable");
       if (sequence === this.latestRouteImageSequence) {
         this.ocrAnalysisDurationsMs = [...this.ocrAnalysisDurationsMs, Date.now() - analysisStartedAtMs].slice(-10);
