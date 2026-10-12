@@ -13,7 +13,12 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-ENV NODE_ENV=production DATA_DIR=/data PORT=10000
+ENV NODE_ENV=production \
+    DATA_DIR=/data \
+    PORT=10000 \
+    OCR_TURBO_MODE=true \
+    OCR_VARIANT_CONCURRENCY=4 \
+    UV_THREADPOOL_SIZE=16
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
