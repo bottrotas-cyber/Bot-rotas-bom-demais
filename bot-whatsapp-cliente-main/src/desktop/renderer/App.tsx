@@ -3626,18 +3626,18 @@ function PanelApp() {
             </button>
           </div>
         ) : null}
-        <div className="client-balance-pill" aria-label="Valor a pagar neste mês">
-          <CircleDollarSign size={20} />
-          <span>
-            <small>A pagar neste mês</small>
-            <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
-          </span>
-        </div>
         <div className="group-pill">
           <span>{snapshot.monitoringMode === "test" ? "Teste ativo" : "Grupo alvo"}</span>
           <strong>{snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel}</strong>
         </div>
       </section>
+      <div className="client-balance-pill" aria-label="Valor a pagar neste mês">
+        <CircleDollarSign size={16} />
+        <span>
+          <small>A pagar neste mês</small>
+          <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+        </span>
+      </div>
 
       {activeTab === "home" ? (
         <section className="mobile-home">

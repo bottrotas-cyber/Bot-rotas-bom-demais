@@ -776,16 +776,22 @@ button {
 }
 
 .client-balance-pill {
-  min-width: 190px;
+  position: fixed;
+  bottom: calc(88px + env(safe-area-inset-bottom));
+  right: 12px;
+  z-index: 35;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border: 1px solid rgba(52, 211, 153, 0.5);
-  border-radius: 8px;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgba(52, 211, 153, 0.32);
+  border-radius: 10px;
   color: #ecfdf5;
-  background: linear-gradient(135deg, rgba(6, 78, 59, 0.88), rgba(5, 46, 22, 0.82));
-  box-shadow: 0 0 24px rgba(16, 185, 129, 0.13);
+  background: rgba(4, 30, 24, 0.82);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  opacity: 0.94;
 }
 
 .client-balance-pill span {
@@ -795,7 +801,7 @@ button {
 
 .client-balance-pill small {
   color: #a7f3d0;
-  font-size: 0.68rem;
+  font-size: 0.58rem;
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -803,7 +809,7 @@ button {
 
 .client-balance-pill strong {
   color: #fff;
-  font-size: 1.15rem;
+  font-size: 0.92rem;
 }
 
 .eyebrow,
@@ -6700,8 +6706,7 @@ body:has(.modal-backdrop) {
   }
 
   .client-balance-pill {
-    justify-content: center;
-    width: 100%;
+    width: auto;
   }
 
   .admin-console-header {
@@ -8626,9 +8631,9 @@ body {
 }
 
 .app-shell:not(.admin-shell) .app-topbar {
-  position: sticky;
-  top: max(8px, env(safe-area-inset-top));
-  z-index: 12;
+  position: relative;
+  top: auto;
+  z-index: 2;
   padding: 12px 14px !important;
   border: 1px solid var(--liquid-stroke);
   border-radius: 22px;
@@ -8889,8 +8894,12 @@ body {
   }
 
   .app-shell:not(.admin-shell) .app-topbar {
-    top: max(5px, env(safe-area-inset-top));
     border-radius: 20px;
+  }
+
+  .client-balance-pill {
+    bottom: calc(82px + env(safe-area-inset-bottom));
+    right: 7px;
   }
 
   .app-shell .panel,
