@@ -1616,21 +1616,24 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   }
 
   function applyMonitorSnapshot(snapshot: Awaited<ReturnType<typeof getAdminMonitor>>) {
-    setDashboard(snapshot.routes);
-    setUsersDashboard(snapshot.users);
-    setSupportDashboard(snapshot.support);
-    setAdminLogs(snapshot.logs);
+    const safeUsers = snapshot?.users && Array.isArray(snapshot.users.users) ? snapshot.users : undefined;
+    const safeRoutes = snapshot?.routes && Array.isArray(snapshot.routes.routes) ? snapshot.routes : undefined;
+    const safeLogs = Array.isArray(snapshot?.logs) ? snapshot.logs : [];
+    if (safeRoutes) setDashboard(safeRoutes);
+    if (safeUsers) setUsersDashboard(safeUsers);
+    if (snapshot?.support && Array.isArray(snapshot.support.messages)) setSupportDashboard(snapshot.support);
+    setAdminLogs(safeLogs);
     setDetail((current) => {
-      if (!current) return current;
-      const summary = snapshot.users.users.find((user) => user.email === current.email);
+      if (!current || !safeUsers || !safeRoutes) return current;
+      const summary = safeUsers.users.find((user) => user.email === current.email);
       return {
         ...current,
         ...(summary || {}),
-        logs: snapshot.logs.filter((log) => log.clientEmail === current.email).slice(0, 250),
-        routes: snapshot.routes.routes.filter((route) => route.clientEmail === current.email)
+        logs: safeLogs.filter((log) => log.clientEmail === current.email).slice(0, 250),
+        routes: safeRoutes.routes.filter((route) => route.clientEmail === current.email)
       };
     });
-    setError("");
+    if (safeUsers && safeRoutes) setError("");
   }
 
   function refresh() {

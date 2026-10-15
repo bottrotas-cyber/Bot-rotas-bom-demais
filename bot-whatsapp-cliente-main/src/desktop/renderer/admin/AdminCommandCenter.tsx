@@ -706,16 +706,21 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   }
 
   function applySnapshot(snapshot: AdminMonitorSnapshot) {
-    setRoutes(snapshot.routes);
-    setUsers(snapshot.users);
-    setSupport(snapshot.support);
-    setImageUsage(snapshot.imageUsage || emptyImageUsage);
-    setUsageAmounts((current) => mergeUsageAmounts(current, snapshot.imageUsage || emptyImageUsage, dirtyUsageAmounts.current));
-    setLogs(snapshot.logs);
-    setSelectedRoutes((current) => current.filter((id) => snapshot.routes.routes.some((route) => route.id === id && routeDecision(route) === "pending")));
-    setLeaders(snapshot.leaders || []);
-    setStreamState("live");
-    setError("");
+    const safeSnapshot = snapshot && typeof snapshot === "object" ? snapshot : {} as AdminMonitorSnapshot;
+    const nextRoutes = safeSnapshot.routes && Array.isArray(safeSnapshot.routes.routes) ? safeSnapshot.routes : emptyRoutes;
+    const nextUsers = safeSnapshot.users && Array.isArray(safeSnapshot.users.users) ? safeSnapshot.users : undefined;
+    const nextSupport = safeSnapshot.support && Array.isArray(safeSnapshot.support.messages) ? safeSnapshot.support : emptySupport;
+    const nextUsage = safeSnapshot.imageUsage || emptyImageUsage;
+    setRoutes(nextRoutes);
+    if (nextUsers) setUsers(nextUsers);
+    setSupport(nextSupport);
+    setImageUsage(nextUsage);
+    setUsageAmounts((current) => mergeUsageAmounts(current, nextUsage, dirtyUsageAmounts.current));
+    setLogs(Array.isArray(safeSnapshot.logs) ? safeSnapshot.logs : []);
+    setSelectedRoutes((current) => current.filter((id) => nextRoutes.routes.some((route) => route.id === id && routeDecision(route) === "pending")));
+    setLeaders(Array.isArray(safeSnapshot.leaders) ? safeSnapshot.leaders : []);
+    setStreamState(nextUsers ? "live" : "fallback");
+    setError(nextUsers ? "" : "O servidor enviou um snapshot incompleto; mantendo os dados anteriores e tentando novamente.");
   }
 
   function refresh() {
@@ -738,7 +743,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     });
   }, []);
 
-  const clients = useMemo(() => users.users.filter((user) => user.role === "client"), [users.users]);
+  const safeAdminUsers = Array.isArray(users?.users) ? users.users : [];
+  const clients = useMemo(() => safeAdminUsers.filter((user) => user.role === "client"), [safeAdminUsers]);
   const clientModeTarget = useMemo(() => {
     const selectedClient = clientFilter === "all"
       ? undefined
@@ -1036,7 +1042,9 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     if (!next) return;
     setBusy(true);
     try {
-      setUsers(await saveAdminUser(next));
+      const result = await saveAdminUser(next);
+      if (result && Array.isArray(result.users)) setUsers(result);
+      else refresh();
       setEditor(undefined);
       showToast("Usuário salvo.");
       refresh();
@@ -1673,8 +1681,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
               <button className="button primary" type="button" onClick={() => setEditor(emptyEditor)}><UserPlus size={18} />Adicionar usuário</button>
               <button className="button" type="button" onClick={() => exportRoutes("csv")}><Download size={18} />Exportar rotas</button>
             </div>
-            {editor ? <UserEditor value={editor} busy={busy} competitors={users.users} onChange={setEditor} onCancel={() => setEditor(undefined)} onSave={() => saveUser()} /> : null}
-            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400, dispatchMatchups: user.dispatchMatchups || [] })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400, dispatchMatchups: user.dispatchMatchups || [] })} />
+            {editor ? <UserEditor value={editor} busy={busy} competitors={safeAdminUsers} onChange={setEditor} onCancel={() => setEditor(undefined)} onSave={() => saveUser()} /> : null}
+            <ClientsTable users={safeAdminUsers} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400, dispatchMatchups: user.dispatchMatchups || [] })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400, dispatchMatchups: user.dispatchMatchups || [] })} />
           </section>
         ) : null}
 
