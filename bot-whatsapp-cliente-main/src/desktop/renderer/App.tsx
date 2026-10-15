@@ -70,7 +70,6 @@ import {
   clearAdminMaintenance,
   enterClientMode,
   getAdminMonitor,
-  getAdminCloudBackupStatus,
   getAdminUserDetail,
   getPanelMe,
   getReleaseNotice,
@@ -89,8 +88,6 @@ import {
   setPanelUserEmail,
   setPanelUserRole,
   subscribeAdminMonitor,
-  triggerAdminCloudBackup,
-  AdminCloudBackupStatus,
   validateAdminRoute
 } from "./api";
 import "./styles.css";
@@ -1495,8 +1492,6 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   });
   const [usersDashboard, setUsersDashboard] = useState<AdminUsersSnapshot>({ users: [] });
   const [supportDashboard, setSupportDashboard] = useState<AdminSupportMessagesSnapshot>({ messages: [], unread: 0 });
-  const [cloudBackupStatus, setCloudBackupStatus] = useState<AdminCloudBackupStatus>();
-  const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
   const [adminLogs, setAdminLogs] = useState<AdminLogEntry[]>([]);
   const [activeSection, setActiveSection] = useState<AdminSection>();
   const [activeAdminTab, setActiveAdminTab] = useState<AdminMainTab>("dashboard");
@@ -1653,39 +1648,11 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       });
   }
 
-  async function refreshCloudBackupStatus() {
-    try {
-      setCloudBackupStatus(await getAdminCloudBackupStatus());
-    } catch (nextError) {
-      if (isAuthError(nextError)) onLogout();
-    }
-  }
-
-  async function createCloudBackupNow() {
-    setCloudBackupBusy(true);
-    try {
-      const result = await triggerAdminCloudBackup();
-      setCloudBackupStatus(result.status);
-      showAdminToast("Backup solicitado; o status será atualizado automaticamente.");
-    } catch (nextError) {
-      showAdminToast(nextError instanceof Error ? nextError.message : "Não foi possível iniciar o backup.");
-    } finally {
-      setCloudBackupBusy(false);
-    }
-  }
-
   useEffect(() => {
     refresh();
     const unsubscribe = subscribeAdminMonitor(applyMonitorSnapshot, refresh);
     return unsubscribe;
   }, []);
-
-  useEffect(() => {
-    if (activeAdminTab !== "settings") return;
-    void refreshCloudBackupStatus();
-    const timer = window.setInterval(() => void refreshCloudBackupStatus(), 10_000);
-    return () => window.clearInterval(timer);
-  }, [activeAdminTab]);
 
   useEffect(() => {
     const locked = Boolean(activeSection || detail || routeDetail || leaderAlert);
@@ -2462,23 +2429,6 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               </div>
             </div>
             <section className="admin-settings-grid">
-              <div className="admin-settings-panel">
-                <p className="panel-label">Proteção dos dados</p>
-                <h2>Backup externo</h2>
-                <p>
-                  {!cloudBackupStatus ? "Consultando status do backup..." : !cloudBackupStatus.configured
-                    ? "Configure as credenciais do R2 e a chave de criptografia nas variáveis do Render."
-                    : cloudBackupStatus.running
-                      ? "Enviando snapshot criptografado para o R2..."
-                      : cloudBackupStatus.lastSuccessAt
-                        ? `Último envio concluído em ${formatDate(cloudBackupStatus.lastSuccessAt)}. Retenção: ${cloudBackupStatus.retentionDays} dias.`
-                        : "Backup configurado; aguardando o primeiro envio automático."}
-                </p>
-                {cloudBackupStatus?.lastError ? <p role="status">O último envio falhou. Confira os logs do serviço.</p> : null}
-                <button className="button primary" type="button" disabled={!cloudBackupStatus?.configured || cloudBackupBusy || cloudBackupStatus.running} onClick={() => void createCloudBackupNow()}>
-                  {cloudBackupBusy || cloudBackupStatus?.running ? "Backup em andamento..." : "Criar backup agora"}
-                </button>
-              </div>
               <div className="admin-settings-panel">
                 <p className="panel-label">Notificações</p>
                 <h2>Sino do painel</h2>

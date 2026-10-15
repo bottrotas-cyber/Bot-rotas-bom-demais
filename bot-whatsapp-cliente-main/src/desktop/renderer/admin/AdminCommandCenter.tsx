@@ -52,6 +52,8 @@ import {
   bulkDecideAdminRoutes,
   clearAdminMaintenance,
   decideImageUsage,
+  AdminCloudBackupStatus,
+  getAdminCloudBackupStatus,
   getAdminMonitor,
   getAdminUserDetail,
   isAuthError,
@@ -67,6 +69,7 @@ import {
   registerClientPayment,
   saveRouteBillingMode,
   subscribeAdminMonitor,
+  triggerAdminCloudBackup,
   validateAdminRoute
 } from "../api";
 import { enableWebPushNotifications } from "../pushNotifications";
@@ -683,6 +686,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
   const [logLevel, setLogLevel] = useState<LogLevelFilter>("all");
   const [busy, setBusy] = useState(false);
+  const [cloudBackupStatus, setCloudBackupStatus] = useState<AdminCloudBackupStatus>();
+  const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
   const [streamState, setStreamState] = useState<"connecting" | "live" | "fallback">("connecting");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -737,12 +742,40 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       });
   }
 
+  async function refreshCloudBackupStatus() {
+    try {
+      setCloudBackupStatus(await getAdminCloudBackupStatus());
+    } catch (nextError) {
+      if (isAuthError(nextError)) onLogout();
+    }
+  }
+
+  async function createCloudBackupNow() {
+    setCloudBackupBusy(true);
+    try {
+      const result = await triggerAdminCloudBackup();
+      setCloudBackupStatus(result.status);
+      showToast("Backup solicitado; o status será atualizado automaticamente.");
+    } catch (nextError) {
+      showToast(nextError instanceof Error ? nextError.message : "Não foi possível iniciar o backup.");
+    } finally {
+      setCloudBackupBusy(false);
+    }
+  }
+
   useEffect(() => {
     return subscribeAdminMonitor(applySnapshot, (nextError) => {
       setStreamState("fallback");
       if (isAuthError(nextError)) onLogout();
     });
   }, []);
+
+  useEffect(() => {
+    if (page !== "settings") return;
+    void refreshCloudBackupStatus();
+    const timer = window.setInterval(() => void refreshCloudBackupStatus(), 10_000);
+    return () => window.clearInterval(timer);
+  }, [page]);
 
   const safeAdminUsers = Array.isArray(users?.users) ? users.users : [];
   const clients = useMemo(() => safeAdminUsers.filter((user) => user.role === "client"), [safeAdminUsers]);
@@ -2044,6 +2077,23 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                 <div><p>Admin</p><h2>Configurações e sessão</h2></div>
               </div>
               <div className="adminx-settings-grid">
+                <section className="adminx-settings-card">
+                  <ShieldCheck size={20} />
+                  <strong>Backup externo</strong>
+                  <span>
+                    {!cloudBackupStatus ? "Consultando status do backup..." : !cloudBackupStatus.configured
+                      ? "Configure as variáveis do R2 e a chave de criptografia no Render."
+                      : cloudBackupStatus.running
+                        ? "Enviando snapshot criptografado para o R2..."
+                        : cloudBackupStatus.lastSuccessAt
+                          ? `Último envio concluído em ${formatDate(cloudBackupStatus.lastSuccessAt)}. Retenção: ${cloudBackupStatus.retentionDays} dias.`
+                          : "Backup configurado; aguardando o primeiro envio automático."}
+                    {cloudBackupStatus?.lastError ? " O último envio falhou; confira os logs do serviço." : ""}
+                  </span>
+                  <button className="button primary" disabled={!cloudBackupStatus?.configured || cloudBackupBusy || cloudBackupStatus.running} type="button" onClick={() => void createCloudBackupNow()}>
+                    {cloudBackupBusy || cloudBackupStatus?.running ? "Backup em andamento..." : "Criar backup agora"}
+                  </button>
+                </section>
                 <section className="adminx-settings-card">
                   <Bell size={20} />
                   <strong>Notificações</strong>
