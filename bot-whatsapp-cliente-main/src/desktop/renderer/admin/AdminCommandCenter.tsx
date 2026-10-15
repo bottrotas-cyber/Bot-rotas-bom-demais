@@ -772,7 +772,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       setCloudBackupListError("");
       setSelectedCloudBackupKey((current) => result.objects.some((item) => item.key === current)
         ? current
-        : [...result.objects].sort((left, right) => right.size - left.size)[0]?.key || "");
+        : "");
     } catch (nextError) {
       setCloudBackupListError(nextError instanceof Error ? nextError.message : "Não foi possível listar os snapshots do R2.");
     }
@@ -826,6 +826,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     try {
       const result = await restoreAdminCloudBackup(selected.key);
       showToast(result.message);
+      setCloudRestoreBusy(false);
+      void refreshCloudRestoreStatus();
     } catch (nextError) {
       showToast(nextError instanceof Error ? nextError.message : "Não foi possível validar o backup para restauração.");
       setCloudRestoreBusy(false);
@@ -2172,11 +2174,11 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                     {cloudBackupBusy || cloudBackupStatus?.running ? "Backup em andamento..." : "Criar backup agora"}
                   </button>
                   <label className="adminx-backup-picker">
-                    <span>Escolha o snapshot. O maior arquivo foi selecionado como sugestão; confira a data e o tamanho.</span>
+                    <span>Selecione manualmente o backup da data anterior à migração. O tamanho não garante que o snapshot tenha os dados corretos.</span>
                     <select value={selectedCloudBackupKey} onChange={(event) => setSelectedCloudBackupKey(event.target.value)} disabled={!cloudBackupObjects.length || cloudRestoreBusy}>
+                      <option value="">Selecione o snapshot pela data</option>
                       {cloudBackupObjects.map((item) => {
-                        const largest = item.size === Math.max(...cloudBackupObjects.map((backup) => backup.size));
-                        return <option key={item.key} value={item.key}>{largest ? "Sugestão — " : ""}{item.key} · {formatBackupSize(item.size)} · {formatDate(item.lastModified)}</option>;
+                        return <option key={item.key} value={item.key}>{item.key} · {formatBackupSize(item.size)} · {formatDate(item.lastModified)}</option>;
                       })}
                     </select>
                   </label>
@@ -2189,13 +2191,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                     {cloudRestoreStatus?.progress !== undefined && !["completed", "failed"].includes(cloudRestoreStatus.phase)
                       ? <progress max={100} value={cloudRestoreStatus.progress * (100 / 95)} />
                       : null}
-                    {(() => {
-                      const selected = cloudBackupObjects.find((item) => item.key === selectedCloudBackupKey);
-                      const largestSize = Math.max(0, ...cloudBackupObjects.map((item) => item.size));
-                      return selected && largestSize > 0 && selected.size < largestSize
-                        ? <small className="adminx-backup-warning">Este snapshot é menor que outro disponível. Se o backup do bot novo estiver vazio, selecione o snapshot maior e mais antigo.</small>
-                        : null;
-                    })()}
                     {cloudRestoreStatus?.completedAt ? <small>Concluída em {formatDate(cloudRestoreStatus.completedAt)}</small> : null}
                   </section>
                   <span>Durante a restauração, o serviço reinicia. Os dados que já estavam nele são preservados.</span>

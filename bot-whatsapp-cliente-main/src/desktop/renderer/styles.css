@@ -5799,10 +5799,6 @@ body:has(.modal-backdrop) {
   color: #fca5a5 !important;
 }
 
-.adminx-backup-warning {
-  color: #fbbf24 !important;
-}
-
 .adminx-settings-card.danger {
   border-color: rgba(239, 68, 68, 0.22);
 }
