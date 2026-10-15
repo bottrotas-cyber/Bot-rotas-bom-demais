@@ -9,6 +9,9 @@ import { createGunzip, createGzip } from "zlib";
 import * as tar from "tar-stream";
 
 const BACKUP_PREFIX = "rota-mind-backup-v1";
+// Backups from the previous Render setup were written with an extra folder
+// level in the same R2 bucket. Keep them restorable, but never write/prune there.
+const RESTORE_PREFIXES = [BACKUP_PREFIX, "rota-mind-backups/rota-mind-backup-v1"] as const;
 const BACKUP_MAGIC = Buffer.from("RMDBK001", "ascii");
 const DEFAULT_INTERVAL_MS = 15 * 60_000;
 const DEFAULT_RETENTION_DAYS = 30;
@@ -226,19 +229,21 @@ export function getCloudBackupStatus(): CloudBackupStatus {
 export async function listCloudBackupObjects(): Promise<CloudBackupObject[]> {
   if (!config || !client) throw new Error("Cloud backup is not configured.");
   const objects: CloudBackupObject[] = [];
-  let continuationToken: string | undefined;
-  do {
-    const listed = await client.send(new ListObjectsV2Command({
-      Bucket: config.bucket,
-      Prefix: `${BACKUP_PREFIX}/`,
-      ContinuationToken: continuationToken
-    }));
-    for (const item of listed.Contents || []) {
-      if (!item.Key?.endsWith(".rmbak")) continue;
-      objects.push({ key: item.Key, size: item.Size || 0, lastModified: item.LastModified?.toISOString() });
-    }
-    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
-  } while (continuationToken);
+  for (const prefix of RESTORE_PREFIXES) {
+    let continuationToken: string | undefined;
+    do {
+      const listed = await client.send(new ListObjectsV2Command({
+        Bucket: config.bucket,
+        Prefix: `${prefix}/`,
+        ContinuationToken: continuationToken
+      }));
+      for (const item of listed.Contents || []) {
+        if (!item.Key?.endsWith(".rmbak")) continue;
+        objects.push({ key: item.Key, size: item.Size || 0, lastModified: item.LastModified?.toISOString() });
+      }
+      continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+    } while (continuationToken);
+  }
   return objects.sort((left, right) => (right.lastModified || "").localeCompare(left.lastModified || ""));
 }
 
@@ -436,7 +441,8 @@ export async function prepareCloudRestore(dataDir: string, requestedSourceKey?: 
       .sort((left, right) => (right.LastModified?.getTime() || 0) - (left.LastModified?.getTime() || 0))[0];
     const sourceKey = requestedSourceKey || dailySnapshot?.Key || `${BACKUP_PREFIX}/latest.rmbak`;
     const available = await listCloudBackupObjects();
-    if (!sourceKey.startsWith(`${BACKUP_PREFIX}/`) || !sourceKey.endsWith(".rmbak") || !available.some((item) => item.key === sourceKey)) {
+    const allowedPrefix = RESTORE_PREFIXES.some((prefix) => sourceKey.startsWith(`${prefix}/`));
+    if (!allowedPrefix || !sourceKey.endsWith(".rmbak") || !available.some((item) => item.key === sourceKey)) {
       throw new Error("Esse arquivo não está disponível no bucket de backups.");
     }
     setCloudRestoreStatus(dataDir, { phase: "downloading", message: "Baixando o snapshot criptografado...", sourceKey, progress: 0 });
