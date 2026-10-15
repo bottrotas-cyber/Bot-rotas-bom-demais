@@ -207,6 +207,20 @@ export function saveRouteBillingMode(clientEmail: string, enabled: boolean) {
   });
 }
 
+export function saveClientFinance(clientEmail: string, payload: { routePriceCents?: number; dueDay?: number; addPrepaidRoutes?: number }) {
+  return fetchJson<AdminImageUsageSnapshot>(`/api/admin/client-finance/${encodeURIComponent(clientEmail)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function registerClientPayment(clientEmail: string) {
+  return fetchJson<AdminImageUsageSnapshot>(`/api/admin/client-payment/${encodeURIComponent(clientEmail)}`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
 export function subscribeAdminMonitor(callback: (snapshot: AdminMonitorSnapshot) => void, onError?: (error?: unknown) => void) {
   const token = getPanelToken();
   if (!token) return () => undefined;

@@ -19,6 +19,7 @@ import {
   LogOut,
   MessageSquareText,
   RefreshCw,
+  Route,
   RotateCcw,
   Search,
   Send,
@@ -62,6 +63,8 @@ import {
   saveAdminUser,
   saveImagePricing,
   saveImageMonthlyTotal,
+  saveClientFinance,
+  registerClientPayment,
   saveRouteBillingMode,
   subscribeAdminMonitor,
   validateAdminRoute
@@ -75,7 +78,7 @@ type AdminCommandCenterProps = {
   onEnterClientMode: (email: string) => void | Promise<void>;
 };
 
-type AdminPage = "today" | "operations" | "dashboard" | "clients" | "validations" | "reactions" | "validated_ai" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
+type AdminPage = "today" | "operations" | "dashboard" | "clients" | "validations" | "reactions" | "validated_ai" | "validated_routes" | "costs" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
 type DatePreset = "today" | "7d" | "30d" | "all";
 type ReportDatePreset = AdminDatePreset | "custom";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
@@ -113,7 +116,7 @@ const emptyImageUsage: AdminImageUsageSnapshot = {
   month: new Date().toISOString().slice(0, 7),
   entries: [],
   clients: [],
-  totals: { total: 0, pending: 0, billable: 0, excluded: 0, detected: 0, amountCents: 0 }
+  totals: { total: 0, pending: 0, billable: 0, excluded: 0, detected: 0, amountCents: 0, unpaidRoutes: 0 }
 };
 
 const emptyEditor: UserEditorState = {
@@ -665,7 +668,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [page, setPage] = useState<AdminPage>(() => {
     const requested = new URLSearchParams(window.location.search).get("admin");
-    return ["today", "dashboard", "clients", "validations", "reactions", "validated_ai", "usage", "history", "logs", "support", "reports", "maintenance", "settings"].includes(requested || "")
+    return ["today", "dashboard", "clients", "validations", "reactions", "validated_ai", "validated_routes", "costs", "usage", "history", "logs", "support", "reports", "maintenance", "settings"].includes(requested || "")
       ? requested as AdminPage
       : "dashboard";
   });
@@ -694,6 +697,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const [leaderDraft, setLeaderDraft] = useState<LeaderContact>({ name: "", phone: "" });
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [usageView, setUsageView] = useState<"pending" | "history">("pending");
+  const [prepaidDrafts, setPrepaidDrafts] = useState<Record<string, string>>({});
+  const [dueDayDrafts, setDueDayDrafts] = useState<Record<string, string>>({});
 
   function showToast(message: string) {
     setToast(message);
@@ -902,6 +907,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     })
     .sort((a, b) => a.statusRank - b.statusRank || a.client.email.localeCompare(b.client.email));
   const validatedCount = visibleRoutes.filter((route) => routeDecision(route) === "validated").length;
+  const allValidatedRoutes = routes.routes.filter((route) => routeDecision(route) === "validated" && (clientFilter === "all" || route.clientEmail === clientFilter));
   const validationRate = visibleRoutes.length ? Math.round((validatedCount / visibleRoutes.length) * 100) : 0;
   const ocrRoutes = visibleRoutes.filter((route) => Boolean(route.ocr));
   const sentRoutes = visibleRoutes.filter((route) => route.confirmedCount > 0);
@@ -933,7 +939,11 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     detected: 0,
     amountCents: 0,
     defaultAmountCents: 70,
-    billAllValidatedRoutes: false
+    billAllValidatedRoutes: true,
+    routePriceCents: 70,
+    prepaidRoutesRemaining: 0,
+    dueDay: 15,
+    unpaidRoutes: 0
   });
   const visibleDebt = clientFilter === "all"
     ? imageUsage.totals.amountCents
@@ -1115,6 +1125,39 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o controle de cobrança.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveFinanceSettings(clientEmail: string, action: "price" | "credits" | "due") {
+    setBusy(true);
+    try {
+      const payload = action === "price"
+        ? { routePriceCents: parseMoneyInput(usageAmounts[`client:${clientEmail}`] ?? ((pricingClients.find((client) => client.clientEmail === clientEmail)?.routePriceCents || 70) / 100).toFixed(2)) }
+        : action === "credits"
+          ? { addPrepaidRoutes: Math.max(1, Math.floor(Number(prepaidDrafts[clientEmail]) || 0)) }
+          : { dueDay: Math.max(1, Math.min(31, Math.floor(Number(dueDayDrafts[clientEmail]) || 15))) };
+      const next = await saveClientFinance(clientEmail, payload);
+      setImageUsage(next);
+      showToast(action === "credits" ? "Rotas pré-pagas adicionadas." : action === "due" ? "Vencimento atualizado." : "Preço por rota salvo.");
+      refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui atualizar o financeiro.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markClientPaid(clientEmail: string) {
+    if (!window.confirm(`Registrar o pagamento de ${clientEmail} e zerar o saldo em aberto?`)) return;
+    setBusy(true);
+    try {
+      setImageUsage(await registerClientPayment(clientEmail));
+      showToast("Pagamento registrado; histórico preservado.");
+      refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui registrar o pagamento.");
     } finally {
       setBusy(false);
     }
@@ -1305,6 +1348,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     { id: "validations", label: "Validações", Icon: ShieldCheck, badge: validationReviewRoutes.length },
     { id: "reactions", label: "Reações IA", Icon: MessageSquareText, badge: pendingReactedImageRoutes.length },
     { id: "validated_ai", label: "Rotas IA válidas", Icon: CheckCircle2, badge: validatedImageRoutes.length },
+    { id: "validated_routes", label: "Rotas validadas", Icon: ShieldCheck, badge: validatedCount },
+    { id: "costs", label: "Custos", Icon: CircleDollarSign, badge: imageUsage.totals.unpaidRoutes },
     { id: "usage", label: "Análises", Icon: BrainCircuit, badge: imageUsage.totals.pending },
     { id: "history", label: "Histórico", Icon: History },
     { id: "logs", label: "Logs", Icon: Activity, badge: visibleLogs.filter((log) => log.level === "error").length },
@@ -1723,6 +1768,61 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                 <StatusPill tone="green">{validatedImageRoutes.length} válida(s)</StatusPill>
               </div>
               <RouteTable routes={validatedImageRoutes} selectedRoutes={[]} readOnly onSelect={() => undefined} onOpen={setRouteDetail} onValidate={() => undefined} onReject={() => undefined} />
+            </article>
+          </section>
+        ) : null}
+
+        {page === "validated_routes" ? (
+          <section className="adminx-page">
+            <RouteFilters decisionFilter={decisionFilter} modeFilter={modeFilter} onDecision={setDecisionFilter} onMode={setModeFilter} />
+            <div className="adminx-metrics">
+              <MetricCard Icon={ShieldCheck} tone="green" title="Rotas validadas" value={allValidatedRoutes.length} detail="IA, Target e confirmação manual" />
+              <MetricCard Icon={CircleDollarSign} tone="green" title="Saldo em aberto" value={formatMoney(imageUsage.totals.amountCents)} detail={`${imageUsage.totals.unpaidRoutes} rota(s) não pagas`} />
+            </div>
+            <article className="adminx-panel adminx-panel-wide">
+              <div className="adminx-panel-head"><div><p>Histórico completo</p><h2>Todas as rotas confirmadas</h2></div><StatusPill tone="green">{allValidatedRoutes.length} validadas</StatusPill></div>
+              <RouteTable routes={allValidatedRoutes} selectedRoutes={[]} readOnly onSelect={() => undefined} onOpen={setRouteDetail} onValidate={() => undefined} onReject={() => undefined} />
+              {!allValidatedRoutes.length ? <p className="adminx-empty-text">Ainda não há rotas validadas neste filtro.</p> : null}
+            </article>
+          </section>
+        ) : null}
+
+        {page === "costs" ? (
+          <section className="adminx-page adminx-costs-page">
+            <div className="adminx-metrics">
+              <MetricCard Icon={CircleDollarSign} tone="yellow" title="Total a receber" value={formatMoney(imageUsage.totals.amountCents)} detail="somente saldo em aberto" />
+              <MetricCard Icon={Route} tone="blue" title="Rotas em aberto" value={imageUsage.totals.unpaidRoutes} detail="Target, manual e IA" />
+              <MetricCard Icon={CheckCircle2} tone="green" title="Rotas validadas" value={validatedCount} detail="histórico geral" />
+            </div>
+            <article className="adminx-panel adminx-panel-wide">
+              <div className="adminx-panel-head"><div><p>Financeiro por cliente</p><h2>Preço, pré-pago e vencimento</h2></div><CircleDollarSign size={22} /></div>
+              <p className="adminx-costs-note">Toda rota validada é contabilizada. Créditos pré-pagos são consumidos primeiro; depois, o valor configurado por rota entra no saldo até o pagamento.</p>
+              <div className="adminx-costs-list">
+                {pricingClients.map((client) => (
+                  <section className="adminx-cost-client" key={client.clientEmail}>
+                    <header><div><strong>{client.clientEmail}</strong><small>{client.unpaidRoutes} rota(s) em aberto · vence todo dia {client.dueDay}</small></div><strong className="adminx-cost-balance">{formatMoney(client.amountCents)}</strong></header>
+                    <div className="adminx-cost-controls">
+                      <label><span>Valor por rota</span><input inputMode="decimal" value={usageAmounts[`client:${client.clientEmail}`] ?? (client.routePriceCents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} onChange={(event) => editUsageAmount(`client:${client.clientEmail}`, event.target.value)} /></label>
+                      <button className="button primary" disabled={busy} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "price")}>Salvar preço</button>
+                      <label><span>Dia de vencimento (1–31)</span><input inputMode="numeric" value={dueDayDrafts[client.clientEmail] ?? String(client.dueDay)} onChange={(event) => setDueDayDrafts((draft) => ({ ...draft, [client.clientEmail]: event.target.value }))} /></label>
+                      <button className="button" disabled={busy} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "due")}>Salvar data</button>
+                      <label><span>Adicionar rotas pré-pagas</span><input inputMode="numeric" placeholder="Ex.: 10" value={prepaidDrafts[client.clientEmail] || ""} onChange={(event) => setPrepaidDrafts((draft) => ({ ...draft, [client.clientEmail]: event.target.value }))} /></label>
+                      <button className="button" disabled={busy || !Number(prepaidDrafts[client.clientEmail])} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "credits")}>Adicionar créditos</button>
+                    </div>
+                    <footer><span>{client.prepaidRoutesRemaining} rota(s) pré-paga(s) restante(s)</span><button className="button" disabled={busy || client.amountCents <= 0} type="button" onClick={() => markClientPaid(client.clientEmail)}>Registrar pagamento e iniciar novo período</button></footer>
+                  </section>
+                ))}
+                {!pricingClients.length ? <p className="adminx-empty-text">Nenhum cliente cadastrado.</p> : null}
+              </div>
+            </article>
+            <article className="adminx-panel adminx-panel-wide">
+              <div className="adminx-panel-head"><div><p>Livro financeiro</p><h2>Rotas e cobranças</h2></div><StatusPill tone="blue">{(imageUsage.ledgerEntries || imageUsage.entries).length} registro(s)</StatusPill></div>
+              <div className="adminx-cost-ledger">
+                {(imageUsage.ledgerEntries || imageUsage.entries).filter((entry) => entry.decision === "billable" && (clientFilter === "all" || entry.clientEmail === clientFilter)).map((entry) => (
+                  <div key={entry.id}><span><strong>{entry.clientEmail}</strong><small>{entry.gaiola || entry.route || entry.bairro || "Rota validada"} · {formatShort(entry.reviewedAt || entry.createdAt)} · {entry.billingSource || "imagem"}</small></span><span>{entry.paymentStatus === "prepaid" ? "Pré-paga" : entry.paymentStatus === "paid" ? "Pago" : "Em aberto"}</span><strong>{formatMoney(entry.amountCents)}</strong></div>
+                ))}
+                {!(imageUsage.ledgerEntries || imageUsage.entries).some((entry) => entry.decision === "billable" && (clientFilter === "all" || entry.clientEmail === clientFilter)) ? <p className="adminx-empty-text">Nenhuma rota no livro financeiro.</p> : null}
+              </div>
             </article>
           </section>
         ) : null}

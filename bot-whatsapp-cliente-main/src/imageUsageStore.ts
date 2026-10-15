@@ -1,13 +1,15 @@
 import { writeJsonAtomic } from "./storageJson";
 import fs from "fs";
 import { AdminImageUsageSnapshot, ClientImageUsageSnapshot, ImageAnalysisResult, ImageUsageDecision, ImageUsageEntry } from "./shared/types";
-import { isAlwaysBillableValidatedRouteClient } from "./validatedRouteUsage";
-
 type StoredImageUsage = {
   entries: ImageUsageEntry[];
   defaultAmounts: Record<string, number>;
   monthlyTotalOverrides: Record<string, number>;
   billAllValidatedRoutes: Record<string, boolean>;
+  routePrices: Record<string, number>;
+  prepaidRoutes: Record<string, number>;
+  dueDays: Record<string, number>;
+  lastPayments: Record<string, string>;
 };
 
 type RecordAnalysisInput = {
@@ -29,6 +31,7 @@ type RecordAnalysisInput = {
 type ValidatedRouteUsageInput = Omit<RecordAnalysisInput, "id"> & {
   analysisId?: string;
   routeDispatchId: string;
+  billingSource?: "target" | "manual" | "ai" | "image";
 };
 
 const MAX_ENTRIES = 50_000;
@@ -106,16 +109,40 @@ export class ImageUsageStore {
 
   decideValidatedRoute(input: ValidatedRouteUsageInput, reviewedBy: string) {
     const normalizedEmail = input.clientEmail.trim().toLowerCase();
-    const exact = this.data.entries.find((entry) =>
-      (input.analysisId && entry.id === input.analysisId) || entry.routeDispatchId === input.routeDispatchId
-    );
-    const legacy = exact || (!input.analysisId ? this.findLegacyAnalysisForRoute(input, normalizedEmail) : undefined);
+    const routeEntry = this.data.entries.find((entry) => entry.routeDispatchId === input.routeDispatchId);
+    if (routeEntry?.decision === "billable") return false;
+    const analysisEntry = input.analysisId ? this.data.entries.find((entry) => entry.id === input.analysisId) : undefined;
+    const reusableAnalysis = analysisEntry && (!analysisEntry.routeDispatchId || analysisEntry.routeDispatchId === input.routeDispatchId)
+      ? analysisEntry
+      : undefined;
+    const legacy = routeEntry || reusableAnalysis || (!input.analysisId ? this.findLegacyAnalysisForRoute(input, normalizedEmail) : undefined);
     const entry = legacy || this.record({
       ...input,
-      id: input.analysisId || `validated-route:${normalizedEmail}:${input.routeDispatchId}`,
+      id: `validated-route:${normalizedEmail}:${input.routeDispatchId}`,
       clientEmail: normalizedEmail
     });
-    return this.decideForRoute(entry.id, input.routeDispatchId, "billable", reviewedBy);
+    const now = new Date().toISOString();
+    const prepaid = this.data.prepaidRoutes[normalizedEmail] || 0;
+    const prepaidCovered = prepaid > 0;
+    if (prepaidCovered) this.data.prepaidRoutes[normalizedEmail] = prepaid - 1;
+    this.data.entries = this.data.entries.map((candidate) => candidate.id !== entry.id ? candidate : {
+      ...candidate,
+      routeDispatchId: input.routeDispatchId,
+      route: input.route || candidate.route,
+      bairro: input.bairro || candidate.bairro,
+      gaiola: input.gaiola || candidate.gaiola,
+      groupJid: input.groupJid || candidate.groupJid,
+      groupName: input.groupName || candidate.groupName,
+      billingSource: input.billingSource || candidate.billingSource || "image",
+      decision: "billable",
+      amountCents: prepaidCovered ? 0 : this.routePrice(normalizedEmail),
+      paymentStatus: prepaidCovered ? "prepaid" : "unpaid",
+      reviewedAt: now,
+      reviewedBy,
+      updatedAt: now
+    });
+    this.save();
+    return true;
   }
 
   renameClientEmail(previous: string, next: string) {
@@ -133,6 +160,12 @@ export class ImageUsageStore {
       this.data.billAllValidatedRoutes[next] = this.data.billAllValidatedRoutes[previous];
       delete this.data.billAllValidatedRoutes[previous];
     }
+    for (const map of [this.data.routePrices, this.data.prepaidRoutes, this.data.dueDays, this.data.lastPayments]) {
+      if (Object.prototype.hasOwnProperty.call(map, previous)) {
+        map[next] = map[previous];
+        delete map[previous];
+      }
+    }
     this.save();
   }
 
@@ -142,13 +175,42 @@ export class ImageUsageStore {
   }
 
   billsAllValidatedRoutes(clientEmail: string) {
-    const email = clientEmail.trim().toLowerCase();
-    return this.data.billAllValidatedRoutes[email] ?? isAlwaysBillableValidatedRouteClient(email);
+    void clientEmail;
+    return true;
   }
 
   setDefaultAmount(clientEmail: string, amountCents: number) {
     const email = clientEmail.trim().toLowerCase();
     this.data.defaultAmounts[email] = this.normalizeAmount(amountCents);
+    this.data.routePrices[email] = this.normalizeAmount(amountCents);
+    this.save();
+  }
+
+  setRoutePrice(clientEmail: string, amountCents: number) {
+    const email = clientEmail.trim().toLowerCase();
+    this.data.routePrices[email] = this.normalizeAmount(amountCents);
+    this.data.defaultAmounts[email] = this.data.routePrices[email];
+    this.save();
+  }
+
+  addPrepaidRoutes(clientEmail: string, quantity: number) {
+    const email = clientEmail.trim().toLowerCase();
+    this.data.prepaidRoutes[email] = Math.max(0, (this.data.prepaidRoutes[email] || 0) + Math.floor(quantity));
+    this.save();
+  }
+
+  setDueDay(clientEmail: string, day: number) {
+    this.data.dueDays[clientEmail.trim().toLowerCase()] = Math.max(1, Math.min(31, Math.floor(day)));
+    this.save();
+  }
+
+  registerPayment(clientEmail: string) {
+    const email = clientEmail.trim().toLowerCase();
+    const now = new Date().toISOString();
+    this.data.entries = this.data.entries.map((entry) => entry.clientEmail === email && entry.decision === "billable" && (entry.paymentStatus || "unpaid") === "unpaid"
+      ? { ...entry, paymentStatus: "paid", paidAt: now, updatedAt: now }
+      : entry);
+    this.data.lastPayments[email] = now;
     this.save();
   }
 
@@ -161,11 +223,12 @@ export class ImageUsageStore {
   snapshot(month = this.currentMonth()): AdminImageUsageSnapshot {
     const entries = this.data.entries.filter((entry) => entry.createdAt.slice(0, 7) === month);
     const overrideEmails = Object.keys(this.data.monthlyTotalOverrides).filter((key) => key.startsWith(`${month}:`)).map((key) => key.slice(month.length + 1));
-    const emails = new Set([...Object.keys(this.data.defaultAmounts), ...Object.keys(this.data.billAllValidatedRoutes), ...overrideEmails, ...entries.map((entry) => entry.clientEmail)]);
+    const emails = new Set([...Object.keys(this.data.defaultAmounts), ...Object.keys(this.data.routePrices), ...Object.keys(this.data.prepaidRoutes), ...Object.keys(this.data.dueDays), ...Object.keys(this.data.billAllValidatedRoutes), ...overrideEmails, ...this.data.entries.map((entry) => entry.clientEmail)]);
     const clients = Array.from(emails).map((email) => this.summary(email, month, entries)).sort((a, b) => b.amountCents - a.amountCents || a.clientEmail.localeCompare(b.clientEmail));
     return {
       month,
       entries,
+      ledgerEntries: this.data.entries.slice(0, 2_000),
       clients,
       totals: {
         total: entries.length,
@@ -173,23 +236,47 @@ export class ImageUsageStore {
         billable: entries.filter((entry) => entry.decision === "billable").length,
         excluded: entries.filter((entry) => entry.decision === "excluded").length,
         detected: entries.filter((entry) => entry.result === "detected").length,
-        amountCents: clients.reduce((total, client) => total + client.amountCents, 0)
+        amountCents: clients.reduce((total, client) => total + client.amountCents, 0),
+        unpaidRoutes: clients.reduce((total, client) => total + client.unpaidRoutes, 0)
       }
     };
   }
 
   clientSnapshot(clientEmail: string, month = this.currentMonth()): ClientImageUsageSnapshot {
     const email = clientEmail.trim().toLowerCase();
-    const entries = this.data.entries.filter((entry) => entry.clientEmail === email && entry.createdAt.slice(0, 7) === month);
+    const allEntries = this.data.entries.filter((entry) => entry.clientEmail === email);
+    const entries = allEntries.filter((entry) => entry.createdAt.slice(0, 7) === month);
+    const unpaid = allEntries.filter((entry) => entry.decision === "billable" && (entry.paymentStatus || "unpaid") === "unpaid");
+    const nextDue = this.nextDueDate(email, new Date());
+    const daysUntilDue = Math.max(0, Math.ceil((nextDue.getTime() - Date.now()) / 86_400_000));
+    const amountCents = unpaid.reduce((total, entry) => total + entry.amountCents, 0);
+    const latestRoute = allEntries.filter((entry) => entry.decision === "billable" && entry.routeDispatchId)
+      .sort((left, right) => Date.parse(right.reviewedAt || right.updatedAt) - Date.parse(left.reviewedAt || left.updatedAt))[0];
+    const latestNoticeText = latestRoute
+      ? latestRoute.paymentStatus === "prepaid"
+        ? `Rota ${latestRoute.gaiola || latestRoute.route || "confirmada"} validada e coberta pelo seu pré-pago. Restam ${this.data.prepaidRoutes[email] || 0} rota(s) antecipada(s); nenhum valor foi adicionado agora.`
+        : `Rota ${latestRoute.gaiola || latestRoute.route || "confirmada"} validada e adicionada ao seu saldo: ${(latestRoute.amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
+      : undefined;
     return {
       month,
-      amountCents: this.summary(email, month, entries).amountCents
+      amountCents,
+      unpaidRoutes: unpaid.length,
+      prepaidRoutesRemaining: this.data.prepaidRoutes[email] || 0,
+      dueDay: this.dueDay(email),
+      dueDate: nextDue.toISOString(),
+      daysUntilDue,
+      latestNotice: latestRoute && latestNoticeText ? { id: latestRoute.routeDispatchId!, text: latestNoticeText } : undefined,
+      billingReminder: unpaid.length && daysUntilDue <= 3
+        ? `Faltam ${daysUntilDue} dia(s) para o vencimento (${nextDue.toLocaleDateString("pt-BR")}). ${unpaid.length} rota(s) em aberto: ${(amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
+        : undefined
     };
   }
 
   private summary(clientEmail: string, month: string, entries: ImageUsageEntry[]) {
     const clientEntries = entries.filter((entry) => entry.clientEmail === clientEmail);
-    const calculatedAmountCents = clientEntries.filter((entry) => entry.decision === "billable").reduce((total, entry) => total + entry.amountCents, 0);
+    const allClientEntries = this.data.entries.filter((entry) => entry.clientEmail === clientEmail);
+    const unpaidEntries = allClientEntries.filter((entry) => entry.decision === "billable" && (entry.paymentStatus || "unpaid") === "unpaid");
+    const calculatedAmountCents = unpaidEntries.reduce((total, entry) => total + entry.amountCents, 0);
     const manualTotalAmountCents = this.data.monthlyTotalOverrides[this.monthlyTotalKey(clientEmail, month)];
     return {
       clientEmail,
@@ -199,10 +286,15 @@ export class ImageUsageStore {
       billable: clientEntries.filter((entry) => entry.decision === "billable").length,
       excluded: clientEntries.filter((entry) => entry.decision === "excluded").length,
       detected: clientEntries.filter((entry) => entry.result === "detected").length,
-      amountCents: manualTotalAmountCents === undefined ? calculatedAmountCents : manualTotalAmountCents,
-      defaultAmountCents: this.defaultAmount(clientEmail),
+      amountCents: calculatedAmountCents,
+      defaultAmountCents: this.routePrice(clientEmail),
       manualTotalAmountCents,
-      billAllValidatedRoutes: this.billsAllValidatedRoutes(clientEmail)
+      billAllValidatedRoutes: true,
+      routePriceCents: this.routePrice(clientEmail),
+      prepaidRoutesRemaining: this.data.prepaidRoutes[clientEmail] || 0,
+      dueDay: this.dueDay(clientEmail),
+      lastPaymentAt: this.data.lastPayments[clientEmail],
+      unpaidRoutes: unpaidEntries.length
     };
   }
 
@@ -225,6 +317,25 @@ export class ImageUsageStore {
 
   private defaultAmount(clientEmail: string) {
     return this.normalizeAmount(this.data.defaultAmounts[clientEmail] ?? 70);
+  }
+
+  private routePrice(clientEmail: string) {
+    return this.normalizeAmount(this.data.routePrices[clientEmail] ?? this.defaultAmount(clientEmail));
+  }
+
+  private dueDay(clientEmail: string) {
+    return this.data.dueDays[clientEmail] || 15;
+  }
+
+  private nextDueDate(clientEmail: string, now: Date) {
+    const day = this.dueDay(clientEmail);
+    const dateForMonth = (year: number, month: number) => {
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      return new Date(year, month, Math.min(day, lastDay), 23, 59, 59, 999);
+    };
+    let due = dateForMonth(now.getFullYear(), now.getMonth());
+    if (due.getTime() <= now.getTime()) due = dateForMonth(now.getFullYear(), now.getMonth() + 1);
+    return due;
   }
 
   private monthlyTotalKey(clientEmail: string, month: string) {
@@ -250,7 +361,11 @@ export class ImageUsageStore {
             entries: parsed.entries,
             defaultAmounts: parsed.defaultAmounts,
             monthlyTotalOverrides: parsed.monthlyTotalOverrides && typeof parsed.monthlyTotalOverrides === "object" ? parsed.monthlyTotalOverrides : {},
-            billAllValidatedRoutes: parsed.billAllValidatedRoutes && typeof parsed.billAllValidatedRoutes === "object" ? parsed.billAllValidatedRoutes : {}
+            billAllValidatedRoutes: parsed.billAllValidatedRoutes && typeof parsed.billAllValidatedRoutes === "object" ? parsed.billAllValidatedRoutes : {},
+            routePrices: parsed.routePrices && typeof parsed.routePrices === "object" ? parsed.routePrices : {},
+            prepaidRoutes: parsed.prepaidRoutes && typeof parsed.prepaidRoutes === "object" ? parsed.prepaidRoutes : {},
+            dueDays: parsed.dueDays && typeof parsed.dueDays === "object" ? parsed.dueDays : {},
+            lastPayments: parsed.lastPayments && typeof parsed.lastPayments === "object" ? parsed.lastPayments : {}
           };
         }
       } catch {
@@ -258,7 +373,7 @@ export class ImageUsageStore {
       }
     }
     if (fs.existsSync(this.filePath) || fs.existsSync(backupPath)) throw new Error("Registro de consumo inválido. Restaure um backup antes de gravar novos dados.");
-    return { entries: [], defaultAmounts: {}, monthlyTotalOverrides: {}, billAllValidatedRoutes: {} };
+    return { entries: [], defaultAmounts: {}, monthlyTotalOverrides: {}, billAllValidatedRoutes: {}, routePrices: {}, prepaidRoutes: {}, dueDays: {}, lastPayments: {} };
   }
 
   private save() {

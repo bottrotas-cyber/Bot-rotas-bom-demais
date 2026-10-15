@@ -30,6 +30,7 @@ export function validatedRouteUsagePayload(route: RouteDispatch, clientEmail: st
     confidence: route.ocr?.confidence,
     groupJid: route.groupJid,
     groupName: route.groupName,
-    analysisFinishedAt: processedAt
+    analysisFinishedAt: processedAt,
+    billingSource: route.ocr || route.decisionSource === "leader_reaction_1h" ? "ai" as const : route.trigger === "manual" ? "manual" as const : "target" as const
   };
 }

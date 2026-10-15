@@ -788,8 +788,27 @@ async function validateAdminRoute(routeId: string, adminEmail: string) {
 }
 
 function approveRouteImageUsage(route: RouteDispatch | undefined, clientEmail: string, reviewedBy: string) {
-  if (!route || (!route.ocr && !imageUsageStore.billsAllValidatedRoutes(clientEmail))) return false;
-  return imageUsageStore.decideValidatedRoute(validatedRouteUsagePayload(route, clientEmail), reviewedBy);
+  if (!route) return false;
+  const changed = imageUsageStore.decideValidatedRoute(validatedRouteUsagePayload(route, clientEmail), reviewedBy);
+  if (!changed) return false;
+  const entry = imageUsageStore.snapshot().ledgerEntries?.find((item) => item.routeDispatchId === route.id);
+  if (entry?.paymentStatus === "prepaid") {
+    const remaining = imageUsageStore.clientSnapshot(clientEmail).prepaidRoutesRemaining;
+    sendClientPush(clientEmail, {
+      title: "Rota confirmada — crédito pré-pago",
+      body: `${entry.gaiola || entry.route || "Rota"} entrou nas rotas antecipadas. Restam ${remaining}; sem nova cobrança agora.`,
+      tag: `route-prepaid:${route.id}`,
+      url: "/?tab=image"
+    });
+  } else if (entry) {
+    sendClientPush(clientEmail, {
+      title: "Rota confirmada — adicionada ao saldo",
+      body: `${entry.gaiola || entry.route || "Rota"}: ${(entry.amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`,
+      tag: `route-billed:${route.id}`,
+      url: "/?tab=image"
+    });
+  }
+  return true;
 }
 
 async function rejectAdminRoute(routeId: string, adminEmail: string, reason?: string) {
@@ -954,6 +973,28 @@ function sendClientPush(email: string, notification: Parameters<PushNotification
   if (panelUsers.get(email)?.blocked) return;
   void pushNotificationStore.sendToEmails([email], notification).catch((error) => console.error("Falha ao enviar notificação ao cliente:", error));
 }
+
+const financeReminderSent = new Map<string, string>();
+function notifyClientsAboutUpcomingPayments() {
+  const today = new Date().toISOString().slice(0, 10);
+  for (const email of getClientEmails()) {
+    const finance = imageUsageStore.clientSnapshot(email);
+    if (!finance.billingReminder || !finance.dueDate) continue;
+    const reminderKey = `${finance.dueDate.slice(0, 10)}:${today}`;
+    if (financeReminderSent.get(email) === reminderKey) continue;
+    financeReminderSent.set(email, reminderKey);
+    sendClientPush(email, {
+      title: "Lembrete de vencimento",
+      body: finance.billingReminder,
+      tag: `billing:${email}:${reminderKey}`,
+      url: "/?tab=image"
+    });
+    broadcastSnapshot(email);
+  }
+}
+const financeReminderTimer = setInterval(notifyClientsAboutUpcomingPayments, 60 * 60_000);
+financeReminderTimer.unref();
+setTimeout(notifyClientsAboutUpcomingPayments, 10_000).unref();
 
 function sendAdminPush(notification: Parameters<PushNotificationStore["sendToRole"]>[1]) {
   void pushNotificationStore.sendToEmails(Array.from(panelUsers.entries()).filter(([, user]) => user.role === "admin" && !user.blocked).map(([email]) => email), notification).catch((error) => console.error("Falha ao enviar notificação ao admin:", error));
@@ -1567,12 +1608,44 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 400, { error: "Cliente ou controle de cobranÃ§a invÃ¡lido." });
         return;
       }
-      imageUsageStore.setBillAllValidatedRoutes(clientEmail, body.enabled);
-      if (body.enabled) {
-        for (const route of getBotForEmail(clientEmail).getRoutes().filter((item) => item.validated)) {
-          approveRouteImageUsage(route, clientEmail, authorizedEmail);
-        }
+      imageUsageStore.setBillAllValidatedRoutes(clientEmail, true);
+      for (const route of getBotForEmail(clientEmail).getRoutes().filter((item) => item.validated)) {
+        approveRouteImageUsage(route, clientEmail, authorizedEmail);
       }
+      broadcastAdminSnapshot();
+      broadcastSnapshot(clientEmail);
+      sendJson(response, 200, imageUsageStore.snapshot());
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/client-finance/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/client-finance/", "")).trim().toLowerCase();
+      const body = await readJsonBody<{ routePriceCents?: number; dueDay?: number; addPrepaidRoutes?: number }>(request);
+      if (!panelUsers.has(clientEmail)) throw new HttpError(404, "Cliente nÃ£o encontrado.");
+      if (body.routePriceCents !== undefined) {
+        if (!Number.isSafeInteger(body.routePriceCents) || body.routePriceCents < 0 || body.routePriceCents > 10_000_000) throw new HttpError(400, "Valor por rota invÃ¡lido.");
+        imageUsageStore.setRoutePrice(clientEmail, body.routePriceCents);
+      }
+      if (body.dueDay !== undefined) {
+        if (!Number.isInteger(body.dueDay) || body.dueDay < 1 || body.dueDay > 31) throw new HttpError(400, "O vencimento deve ser entre os dias 1 e 31.");
+        imageUsageStore.setDueDay(clientEmail, body.dueDay);
+      }
+      if (body.addPrepaidRoutes !== undefined) {
+        if (!Number.isInteger(body.addPrepaidRoutes) || body.addPrepaidRoutes < 1 || body.addPrepaidRoutes > 10_000) throw new HttpError(400, "Quantidade de rotas prÃ©-pagas invÃ¡lida.");
+        imageUsageStore.addPrepaidRoutes(clientEmail, body.addPrepaidRoutes);
+      }
+      broadcastAdminSnapshot();
+      broadcastSnapshot(clientEmail);
+      sendJson(response, 200, imageUsageStore.snapshot());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname.startsWith("/api/admin/client-payment/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/client-payment/", "")).trim().toLowerCase();
+      if (!panelUsers.has(clientEmail)) throw new HttpError(404, "Cliente nÃ£o encontrado.");
+      imageUsageStore.registerPayment(clientEmail);
       broadcastAdminSnapshot();
       broadcastSnapshot(clientEmail);
       sendJson(response, 200, imageUsageStore.snapshot());

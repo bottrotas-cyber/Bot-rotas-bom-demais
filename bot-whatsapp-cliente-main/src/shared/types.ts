@@ -294,6 +294,9 @@ export type ImageUsageEntry = {
   analysisFinishedAt?: string;
   analysisDurationMs?: number;
   routeDispatchId?: string;
+  billingSource?: "target" | "manual" | "ai" | "image";
+  paymentStatus?: "unpaid" | "paid" | "prepaid";
+  paidAt?: string;
   note?: string;
   createdAt: string;
   updatedAt: string;
@@ -312,20 +315,33 @@ export type ImageUsageClientSummary = {
   amountCents: number;
   defaultAmountCents: number;
   manualTotalAmountCents?: number;
-  /** Charge validated routes from OCR, Target and manual dispatches. */
+  routePriceCents: number;
+  prepaidRoutesRemaining: number;
+  dueDay: number;
+  lastPaymentAt?: string;
+  unpaidRoutes: number;
+  /** Kept for compatibility with older clients; all validated routes are now billed. */
   billAllValidatedRoutes: boolean;
 };
 
 export type ClientImageUsageSnapshot = {
   month: string;
   amountCents: number;
+  unpaidRoutes: number;
+  prepaidRoutesRemaining: number;
+  dueDay: number;
+  dueDate?: string;
+  daysUntilDue?: number;
+  billingReminder?: string;
+  latestNotice?: { id: string; text: string };
 };
 
 export type AdminImageUsageSnapshot = {
   month: string;
   entries: ImageUsageEntry[];
+  ledgerEntries?: ImageUsageEntry[];
   clients: ImageUsageClientSummary[];
-  totals: Omit<ImageUsageClientSummary, "clientEmail" | "month" | "defaultAmountCents" | "billAllValidatedRoutes">;
+  totals: Omit<ImageUsageClientSummary, "clientEmail" | "month" | "defaultAmountCents" | "manualTotalAmountCents" | "billAllValidatedRoutes" | "routePriceCents" | "prepaidRoutesRemaining" | "dueDay" | "lastPaymentAt">;
 };
 
 export type PanelUserRole = "client" | "admin";

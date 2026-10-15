@@ -775,43 +775,6 @@ button {
   text-shadow: 0 0 24px rgba(255, 255, 255, 0.16);
 }
 
-.client-balance-pill {
-  position: fixed;
-  bottom: calc(88px + env(safe-area-inset-bottom));
-  right: 12px;
-  z-index: 35;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 10px;
-  border: 1px solid rgba(52, 211, 153, 0.32);
-  border-radius: 10px;
-  color: #ecfdf5;
-  background: rgba(4, 30, 24, 0.82);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  opacity: 0.94;
-}
-
-.client-balance-pill span {
-  display: grid;
-  gap: 1px;
-}
-
-.client-balance-pill small {
-  color: #a7f3d0;
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.client-balance-pill strong {
-  color: #fff;
-  font-size: 0.92rem;
-}
-
 .eyebrow,
 .panel-label {
   margin: 0;
@@ -6705,10 +6668,6 @@ body:has(.modal-backdrop) {
     justify-content: space-between;
   }
 
-  .client-balance-pill {
-    width: auto;
-  }
-
   .admin-console-header {
     align-items: stretch;
     flex-direction: column;
@@ -8897,11 +8856,6 @@ body {
     border-radius: 20px;
   }
 
-  .client-balance-pill {
-    bottom: calc(82px + env(safe-area-inset-bottom));
-    right: 7px;
-  }
-
   .app-shell .panel,
   .app-shell .quick-panel,
   .app-shell .operation-panel,
@@ -9421,4 +9375,45 @@ body,
 
 @media (prefers-reduced-motion: reduce) {
   .foreground-sparks { display: none !important; }
+}
+
+.client-billing-reminder {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(250, 204, 21, 0.42);
+  border-radius: 14px;
+  color: #fff7d6;
+  background: linear-gradient(120deg, rgba(120, 78, 12, 0.28), rgba(25, 13, 35, 0.78));
+}
+
+.client-billing-reminder span { display: grid; gap: 3px; }
+.client-billing-reminder small { color: #e6d9b2; }
+.client-route-billing-notice { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid rgba(167, 139, 250, 0.36); border-radius: 12px; color: #f3e8ff; background: rgba(42, 20, 62, 0.72); }
+.client-route-billing-notice span { flex: 1; }
+
+.adminx-usage-page .adminx-pricing-panel { display: none; }
+.adminx-usage-page .adminx-usage-layout { grid-template-columns: minmax(0, 1fr); }
+.adminx-costs-page { gap: 16px; }
+.adminx-costs-note { margin: 0 0 16px; color: #a9b6c9; }
+.adminx-costs-list { display: grid; gap: 12px; }
+.adminx-cost-client { padding: 16px; border: 1px solid rgba(165, 94, 255, 0.24); border-radius: 14px; background: rgba(10, 7, 16, 0.55); }
+.adminx-cost-client header, .adminx-cost-client footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.adminx-cost-client header > div { display: grid; gap: 4px; }
+.adminx-cost-client header small, .adminx-cost-client footer span { color: #a9b6c9; }
+.adminx-cost-balance { color: #86efac; font-size: 1.2rem; }
+.adminx-cost-controls { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr) auto); align-items: end; gap: 10px; margin: 14px 0; }
+.adminx-cost-controls label { display: grid; gap: 6px; color: #a9b6c9; font-size: 0.8rem; }
+.adminx-cost-controls input { min-width: 0; width: 100%; }
+.adminx-cost-client footer { padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.adminx-cost-ledger { display: grid; gap: 1px; overflow: hidden; border-radius: 10px; }
+.adminx-cost-ledger > div { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 16px; padding: 10px 12px; background: rgba(255,255,255,0.035); }
+.adminx-cost-ledger > div > span:first-child { display: grid; gap: 3px; }
+.adminx-cost-ledger small { color: #a9b6c9; }
+
+@media (max-width: 900px) {
+  .adminx-cost-controls { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+  .adminx-cost-client header, .adminx-cost-client footer { align-items: flex-start; flex-direction: column; }
 }

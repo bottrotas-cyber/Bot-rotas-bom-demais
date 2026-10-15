@@ -2940,6 +2940,7 @@ function PanelApp() {
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
   const [notificationStatus, setNotificationStatus] = useState("");
+  const [dismissedRouteBillingNotice, setDismissedRouteBillingNotice] = useState(() => window.localStorage.getItem(`route-billing-notice:${getPanelUserEmail()}`) || "");
   const [releaseNotice, setReleaseNotice] = useState<AppRelease>();
   const [releaseAcknowledgeBusy, setReleaseAcknowledgeBusy] = useState(false);
   const [releaseError, setReleaseError] = useState("");
@@ -3631,13 +3632,23 @@ function PanelApp() {
           <strong>{snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel}</strong>
         </div>
       </section>
-      <div className="client-balance-pill" aria-label="Valor a pagar neste mês">
-        <CircleDollarSign size={16} />
-        <span>
-          <small>A pagar neste mês</small>
-          <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
-        </span>
-      </div>
+      {snapshot.imageUsage?.billingReminder ? (
+        <section className="client-billing-reminder" role="status">
+          <CircleDollarSign size={18} />
+          <span><strong>Lembrete de pagamento</strong><small>{snapshot.imageUsage.billingReminder}</small></span>
+        </section>
+      ) : null}
+      {snapshot.imageUsage?.latestNotice && snapshot.imageUsage.latestNotice.id !== dismissedRouteBillingNotice ? (
+        <section className="client-route-billing-notice" role="status">
+          <CircleDollarSign size={18} />
+          <span>{snapshot.imageUsage.latestNotice.text}</span>
+          <button className="icon-button" type="button" aria-label="Fechar aviso" onClick={() => {
+            const id = snapshot.imageUsage?.latestNotice?.id || "";
+            setDismissedRouteBillingNotice(id);
+            window.localStorage.setItem(`route-billing-notice:${userEmail}`, id);
+          }}><X size={16} /></button>
+        </section>
+      ) : null}
 
       {activeTab === "home" ? (
         <section className="mobile-home">
@@ -3724,7 +3735,8 @@ function PanelApp() {
               <div className="client-usage-icon"><BrainCircuit size={22} /></div>
               <div>
                 <p className="panel-label">Financeiro</p>
-                <h2>Consumo de rotas</h2>
+                <h2>Saldo em aberto</h2>
+                <small>{snapshot.imageUsage?.unpaidRoutes || 0} rota(s) em aberto · {snapshot.imageUsage?.prepaidRoutesRemaining || 0} pré-paga(s) restante(s)</small>
               </div>
               <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
             </div>
