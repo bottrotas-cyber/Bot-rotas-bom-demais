@@ -1644,7 +1644,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/client-finance/")) {
       if (!requireAdmin(authorizedEmail, response)) return;
       const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/client-finance/", "")).trim().toLowerCase();
-      const body = await readJsonBody<{ routePriceCents?: number; dueDay?: number; addPrepaidRoutes?: number; paymentEveryRoutes?: number }>(request);
+      const body = await readJsonBody<{ routePriceCents?: number; dueDay?: number; addPrepaidRoutes?: number; prepaidRoutesRemaining?: number; paymentEveryRoutes?: number }>(request);
       if (!panelUsers.has(clientEmail)) throw new HttpError(404, "Cliente nÃ£o encontrado.");
       if (body.routePriceCents !== undefined) {
         if (!Number.isSafeInteger(body.routePriceCents) || body.routePriceCents < 0 || body.routePriceCents > 10_000_000) throw new HttpError(400, "Valor por rota invÃ¡lido.");
@@ -1657,6 +1657,10 @@ const server = http.createServer(async (request, response) => {
       if (body.addPrepaidRoutes !== undefined) {
         if (!Number.isInteger(body.addPrepaidRoutes) || body.addPrepaidRoutes < 1 || body.addPrepaidRoutes > 10_000) throw new HttpError(400, "Quantidade de rotas prÃ©-pagas invÃ¡lida.");
         imageUsageStore.addPrepaidRoutes(clientEmail, body.addPrepaidRoutes);
+      }
+      if (body.prepaidRoutesRemaining !== undefined) {
+        if (!Number.isInteger(body.prepaidRoutesRemaining) || body.prepaidRoutesRemaining < 0 || body.prepaidRoutesRemaining > 10_000) throw new HttpError(400, "Quantidade de rotas antecipadas inválida.");
+        imageUsageStore.setPrepaidRoutes(clientEmail, body.prepaidRoutesRemaining);
       }
       if (body.paymentEveryRoutes !== undefined) {
         if (!Number.isInteger(body.paymentEveryRoutes) || body.paymentEveryRoutes < 0 || body.paymentEveryRoutes > 10_000) throw new HttpError(400, "A quantidade de rotas por ciclo deve ser entre 0 e 10000.");

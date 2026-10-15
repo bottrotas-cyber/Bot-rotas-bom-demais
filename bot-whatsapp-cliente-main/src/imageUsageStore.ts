@@ -200,6 +200,12 @@ export class ImageUsageStore {
     this.save();
   }
 
+  setPrepaidRoutes(clientEmail: string, quantity: number) {
+    const email = clientEmail.trim().toLowerCase();
+    this.data.prepaidRoutes[email] = Math.max(0, Math.floor(quantity));
+    this.save();
+  }
+
   setDueDay(clientEmail: string, day: number) {
     this.data.dueDays[clientEmail.trim().toLowerCase()] = Math.max(1, Math.min(31, Math.floor(day)));
     this.save();

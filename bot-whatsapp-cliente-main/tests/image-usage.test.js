@@ -50,6 +50,15 @@ test("Fernando fecha cobrança a cada 10 rotas validadas e reinicia o ciclo ao r
   assert.equal(store.clientSnapshot(email).billingReminder, undefined);
 });
 
+test("saldo de rotas antecipadas é definido como quantidade exata", () => {
+  const store = new ImageUsageStore(tempFile("usage-prepaid-exact.json"));
+  store.addPrepaidRoutes("fernando@gmail.com", 20);
+  store.setPrepaidRoutes("fernando@gmail.com", 10);
+  assert.equal(store.snapshot().clients.find((client) => client.clientEmail === "fernando@gmail.com").prepaidRoutesRemaining, 10);
+  store.decideValidatedRoute({ routeDispatchId: "rota-antecipada", clientEmail: "fernando@gmail.com", messageId: "msg-1", result: "detected" }, "admin@teste.com");
+  assert.equal(store.snapshot().clients.find((client) => client.clientEmail === "fernando@gmail.com").prepaidRoutesRemaining, 9);
+});
+
 test("usa R$ 0,70 como padrão e preserva telemetria da análise", () => {
   const store = new ImageUsageStore(tempFile("usage.json"));
   store.record({

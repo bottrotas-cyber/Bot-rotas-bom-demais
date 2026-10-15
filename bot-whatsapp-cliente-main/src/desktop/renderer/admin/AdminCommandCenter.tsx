@@ -1140,15 +1140,30 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       const payload = action === "price"
         ? { routePriceCents: parseMoneyInput(usageAmounts[`client:${clientEmail}`] ?? ((pricingClients.find((client) => client.clientEmail === clientEmail)?.routePriceCents || 70) / 100).toFixed(2)) }
         : action === "credits"
-          ? { addPrepaidRoutes: Math.max(1, Math.floor(Number(prepaidDrafts[clientEmail]) || 0)) }
+          ? { prepaidRoutesRemaining: Math.max(0, Math.floor(Number(prepaidDrafts[clientEmail] ?? pricingClients.find((client) => client.clientEmail === clientEmail)?.prepaidRoutesRemaining) || 0)) }
           : action === "due"
             ? { dueDay: Math.max(1, Math.min(31, Math.floor(Number(dueDayDrafts[clientEmail]) || 15))) }
             : { paymentEveryRoutes: Math.max(0, Math.min(10_000, Math.floor(Number(routeCadenceDrafts[clientEmail] ?? pricingClients.find((client) => client.clientEmail === clientEmail)?.paymentEveryRoutes) || 0))) };
       const next = await saveClientFinance(clientEmail, payload);
       setImageUsage(next);
-      showToast(action === "credits" ? "Rotas pré-pagas adicionadas." : action === "due" ? "Vencimento atualizado." : action === "cadence" ? "Ciclo de cobrança atualizado." : "Preço por rota salvo.");
+      showToast(action === "credits" ? "Quantidade de rotas antecipadas atualizada." : action === "due" ? "Vencimento atualizado." : action === "cadence" ? "Ciclo de cobrança atualizado." : "Preço por rota salvo.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui atualizar o financeiro.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearPrepaidRoutes(clientEmail: string) {
+    if (!window.confirm(`Zerar o saldo de rotas antecipadas de ${clientEmail}?`)) return;
+    setBusy(true);
+    try {
+      const next = await saveClientFinance(clientEmail, { prepaidRoutesRemaining: 0 });
+      setImageUsage(next);
+      setPrepaidDrafts((draft) => ({ ...draft, [clientEmail]: "0" }));
+      showToast("Saldo de rotas antecipadas zerado.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "NÃ£o consegui zerar o saldo antecipado.");
     } finally {
       setBusy(false);
     }
@@ -1805,8 +1820,9 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                       <button className="button" disabled={busy} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "due")}>Salvar data</button>
                       <label><span>Cobrar a cada N rotas (0 = por data)</span><input inputMode="numeric" min="0" value={routeCadenceDrafts[client.clientEmail] ?? String(client.paymentEveryRoutes)} onChange={(event) => setRouteCadenceDrafts((draft) => ({ ...draft, [client.clientEmail]: event.target.value }))} /></label>
                       <button className="button" disabled={busy} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "cadence")}>Salvar ciclo</button>
-                      <label><span>Adicionar rotas pré-pagas</span><input inputMode="numeric" placeholder="Ex.: 10" value={prepaidDrafts[client.clientEmail] || ""} onChange={(event) => setPrepaidDrafts((draft) => ({ ...draft, [client.clientEmail]: event.target.value }))} /></label>
-                      <button className="button" disabled={busy || !Number(prepaidDrafts[client.clientEmail])} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "credits")}>Adicionar créditos</button>
+                      <label><span>Rotas antecipadas pagas (quantidade exata)</span><input inputMode="numeric" min="0" placeholder="0" value={prepaidDrafts[client.clientEmail] ?? String(client.prepaidRoutesRemaining)} onChange={(event) => setPrepaidDrafts((draft) => ({ ...draft, [client.clientEmail]: event.target.value }))} /></label>
+                      <button className="button" disabled={busy || prepaidDrafts[client.clientEmail] === ""} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "credits")}>Salvar quantidade</button>
+                      <button className="button danger" disabled={busy || client.prepaidRoutesRemaining === 0} type="button" onClick={() => clearPrepaidRoutes(client.clientEmail)}>Zerar saldo</button>
                     </div>
                     <footer><span>{client.prepaidRoutesRemaining} rota(s) pré-paga(s) restante(s)</span><button className="button" disabled={busy || client.amountCents <= 0} type="button" onClick={() => markClientPaid(client.clientEmail)}>Registrar pagamento e iniciar novo período</button></footer>
                   </section>
