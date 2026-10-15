@@ -776,7 +776,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       const result = await restoreAdminCloudBackup();
       showToast(result.message);
     } catch (nextError) {
-      showToast(nextError instanceof Error ? nextError.message : "NÃ£o foi possÃ­vel validar o backup para restauraÃ§Ã£o.");
+      showToast(nextError instanceof Error ? nextError.message : "Não foi possível validar o backup para restauração.");
       setCloudRestoreBusy(false);
     }
   }
@@ -2111,9 +2111,9 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                   <button className="button primary" disabled={!cloudBackupStatus?.configured || cloudBackupBusy || cloudBackupStatus.running} type="button" onClick={() => void createCloudBackupNow()}>
                     {cloudBackupBusy || cloudBackupStatus?.running ? "Backup em andamento..." : "Criar backup agora"}
                   </button>
-                  <span>A restauraÃ§Ã£o usa a cÃ³pia diÃ¡ria mais recente, protegida contra sobrescrita por um serviÃ§o novo.</span>
-                  <button className="button" disabled={!cloudBackupStatus?.configured || cloudBackupBusy || cloudRestoreBusy || cloudBackupStatus.running} type="button" onClick={() => void restoreCloudBackupNow()}>
-                    {cloudRestoreBusy ? "Preparando restauraÃ§Ã£o..." : "Restaurar Ãºltimo backup"}
+                  <span>A restauração espera o backup atual terminar e usa a cópia diária mais recente.</span>
+                  <button className="button" disabled={!cloudBackupStatus?.configured || cloudRestoreBusy} type="button" onClick={() => void restoreCloudBackupNow()}>
+                    {cloudRestoreBusy ? "Preparando restauração..." : "Restaurar último backup"}
                   </button>
                 </section>
                 <section className="adminx-settings-card">

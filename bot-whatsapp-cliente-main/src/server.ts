@@ -1490,10 +1490,6 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 503, { error: "Configure as variÃ¡veis do R2 neste serviÃ§o antes de restaurar." });
         return;
       }
-      if (getCloudBackupStatus().running) {
-        sendJson(response, 409, { error: "Aguarde o backup atual terminar antes de restaurar." });
-        return;
-      }
       const preparedRestore = await prepareCloudRestore(dataDir);
       sendJson(response, 202, {
         accepted: true,
