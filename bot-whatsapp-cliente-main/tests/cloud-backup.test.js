@@ -63,8 +63,11 @@ test("restaura arquivo criptografado validando conteÃºdo e autenticaÃ§Ã£o"
   try {
     const key = crypto.randomBytes(32);
     await createEncryptedArchive(source, output, key);
-    await extractEncryptedArchive(output, destination, key);
+    const progressUpdates = [];
+    await extractEncryptedArchive(output, destination, key, (progress) => progressUpdates.push(progress));
     assert.equal(fs.readFileSync(path.join(destination, "users", "clientes.json"), "utf8"), "clientes e preferencias");
+    assert.ok(progressUpdates.length > 0, "a extração deve informar progresso");
+    assert.ok(progressUpdates.every((progress) => progress >= 55 && progress <= 87));
     await assert.rejects(extractEncryptedArchive(output, path.join(temp, "wrong-key"), crypto.randomBytes(32)));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

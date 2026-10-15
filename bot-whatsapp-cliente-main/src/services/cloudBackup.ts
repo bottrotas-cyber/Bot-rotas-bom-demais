@@ -3,6 +3,7 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { Transform } from "stream";
 import { pipeline } from "stream/promises";
 import { createGunzip, createGzip } from "zlib";
 import * as tar from "tar-stream";
@@ -34,6 +35,18 @@ export type CloudBackupStatus = {
   running: boolean;
 };
 
+export type CloudBackupObject = { key: string; size: number; lastModified?: string };
+
+export type CloudRestoreStatus = {
+  phase: "idle" | "listing" | "waiting_backup" | "downloading" | "validating" | "ready" | "applying" | "completed" | "failed";
+  progress?: number;
+  sourceKey?: string;
+  message: string;
+  startedAt?: string;
+  updatedAt: string;
+  completedAt?: string;
+};
+
 let status: CloudBackupStatus = {
   enabled: false,
   configured: false,
@@ -47,6 +60,7 @@ let schedule: NodeJS.Timeout | undefined;
 let client: S3Client | undefined;
 let config: BackupConfig | undefined;
 let dailySnapshotDate: string | undefined;
+let restoreStatus: CloudRestoreStatus | undefined;
 
 function parseEncryptionKey(value: string | undefined): Buffer | undefined {
   const normalized = String(value || "").trim();
@@ -90,6 +104,7 @@ function shouldSkip(relativePath: string, isDirectory: boolean) {
   if (segments.some((segment) => ["ocr-result-cache", ".git", "node_modules", "cloud-backup-temp"].includes(segment)
     || segment.startsWith(".cloud-restore-"))) return true;
   const name = segments[segments.length - 1] || "";
+  if (name === ".cloud-restore-status.json" || name === ".cloud-restore-status.json.tmp") return true;
   if (/^ocr-global-.*\.lock$/i.test(name) || /\.tmp$/i.test(name)) return true;
   if (!isDirectory && /(?:^|\/)cloud-backup\.(?:tar\.gz|enc)$/i.test(relativePath)) return true;
   return false;
@@ -208,6 +223,55 @@ export function getCloudBackupStatus(): CloudBackupStatus {
   return { ...status };
 }
 
+export async function listCloudBackupObjects(): Promise<CloudBackupObject[]> {
+  if (!config || !client) throw new Error("Cloud backup is not configured.");
+  const objects: CloudBackupObject[] = [];
+  let continuationToken: string | undefined;
+  do {
+    const listed = await client.send(new ListObjectsV2Command({
+      Bucket: config.bucket,
+      Prefix: `${BACKUP_PREFIX}/`,
+      ContinuationToken: continuationToken
+    }));
+    for (const item of listed.Contents || []) {
+      if (!item.Key?.endsWith(".rmbak")) continue;
+      objects.push({ key: item.Key, size: item.Size || 0, lastModified: item.LastModified?.toISOString() });
+    }
+    continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return objects.sort((left, right) => (right.lastModified || "").localeCompare(left.lastModified || ""));
+}
+
+export function getCloudRestoreStatus(dataDir: string): CloudRestoreStatus {
+  if (restoreStatus) return { ...restoreStatus };
+  try {
+    const saved = JSON.parse(fs.readFileSync(path.join(dataDir, ".cloud-restore-status.json"), "utf8")) as CloudRestoreStatus;
+    if (saved && typeof saved.phase === "string" && typeof saved.message === "string") {
+      restoreStatus = saved;
+      return { ...saved };
+    }
+  } catch { /* No restore marker yet. */ }
+  return { phase: "idle", message: "Nenhuma restauração executada ainda.", updatedAt: new Date().toISOString() };
+}
+
+export function setCloudRestoreStatus(dataDir: string, update: Partial<CloudRestoreStatus> & Pick<CloudRestoreStatus, "phase" | "message">) {
+  const previous = restoreStatus || getCloudRestoreStatus(dataDir);
+  restoreStatus = {
+    ...previous,
+    ...update,
+    startedAt: update.startedAt || previous.startedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  const tempPath = path.join(dataDir, ".cloud-restore-status.json.tmp");
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(restoreStatus), { mode: 0o600 });
+    fs.renameSync(tempPath, path.join(dataDir, ".cloud-restore-status.json"));
+  } catch (error) {
+    console.error(`[BACKUP] Could not save restore status: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { ...restoreStatus };
+}
+
 export async function runCloudBackup(dataDir: string) {
   if (restoring) throw new Error("Backup pausado durante uma restauraÃ§Ã£o.");
   if (!config || !client) throw new Error("Backup na nuvem ainda não está configurado no servidor.");
@@ -275,7 +339,12 @@ function safeArchivePath(root: string, name: string) {
   return target;
 }
 
-export async function extractEncryptedArchive(archivePath: string, destination: string, encryptionKey: Buffer) {
+export async function extractEncryptedArchive(
+  archivePath: string,
+  destination: string,
+  encryptionKey: Buffer,
+  onProgress?: (progress: number, message: string) => void
+) {
   const file = await fs.promises.open(archivePath, "r");
   try {
     const stat = await file.stat();
@@ -290,6 +359,20 @@ export async function extractEncryptedArchive(archivePath: string, destination: 
     const extract = tar.extract();
     let entryCount = 0;
     let expandedBytes = 0;
+    let processedBytes = 0;
+    let lastReportedBytes = 0;
+    const encryptedPayloadBytes = Math.max(1, stat.size - 36);
+    const progress = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        processedBytes += chunk.length;
+        if (onProgress && (processedBytes - lastReportedBytes >= 512 * 1024 || processedBytes >= encryptedPayloadBytes)) {
+          lastReportedBytes = processedBytes;
+          const percent = Math.min(99, Math.floor(processedBytes / encryptedPayloadBytes * 100));
+          onProgress(55 + Math.floor(percent * 0.32), `Validando e extraindo snapshot: ${percent}%`);
+        }
+        callback(null, chunk);
+      }
+    });
     extract.on("entry", (entryHeader, entry, next) => {
       try {
         const target = safeArchivePath(destination, entryHeader.name);
@@ -315,6 +398,7 @@ export async function extractEncryptedArchive(archivePath: string, destination: 
     });
     await pipeline(
       fs.createReadStream(archivePath, { start: 20, end: stat.size - 17 }),
+      progress,
       decipher,
       createGunzip(),
       extract
@@ -326,14 +410,22 @@ export async function extractEncryptedArchive(archivePath: string, destination: 
 }
 
 /** Downloads and fully validates latest.rmbak, extracting it to a private staging folder. */
-export async function prepareCloudRestore(dataDir: string) {
+export async function prepareCloudRestore(dataDir: string, requestedSourceKey?: string) {
   if (!config || !client) throw new Error("O backup na nuvem nÃ£o estÃ¡ configurado neste servidor.");
   if (restoring) throw new Error("JÃ¡ existe uma restauraÃ§Ã£o em andamento.");
   restoring = true;
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rota-mind-restore-"));
-  const archivePath = path.join(tempDir, "latest.rmbak");
+  const archivePath = path.join(tempDir, "selected.rmbak");
   const stageDir = path.join(dataDir, `.cloud-restore-stage-${crypto.randomUUID()}`);
   try {
+    setCloudRestoreStatus(dataDir, {
+      phase: activeBackup ? "waiting_backup" : "listing",
+      message: activeBackup ? "Aguardando o backup em andamento terminar..." : "Localizando o snapshot selecionado...",
+      sourceKey: requestedSourceKey,
+      progress: undefined,
+      startedAt: new Date().toISOString(),
+      completedAt: undefined
+    });
     if (activeBackup) await activeBackup;
     const daily = await client.send(new ListObjectsV2Command({
       Bucket: config.bucket,
@@ -342,16 +434,44 @@ export async function prepareCloudRestore(dataDir: string) {
     const dailySnapshot = (daily.Contents || [])
       .filter((item) => item.Key?.endsWith(".rmbak"))
       .sort((left, right) => (right.LastModified?.getTime() || 0) - (left.LastModified?.getTime() || 0))[0];
-    const sourceKey = dailySnapshot?.Key || `${BACKUP_PREFIX}/latest.rmbak`;
+    const sourceKey = requestedSourceKey || dailySnapshot?.Key || `${BACKUP_PREFIX}/latest.rmbak`;
+    const available = await listCloudBackupObjects();
+    if (!sourceKey.startsWith(`${BACKUP_PREFIX}/`) || !sourceKey.endsWith(".rmbak") || !available.some((item) => item.key === sourceKey)) {
+      throw new Error("Esse arquivo não está disponível no bucket de backups.");
+    }
+    setCloudRestoreStatus(dataDir, { phase: "downloading", message: "Baixando o snapshot criptografado...", sourceKey, progress: 0 });
     const result = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: sourceKey }));
     if (!result.Body) throw new Error("O R2 retornou um backup vazio.");
     const source = result.Body as NodeJS.ReadableStream;
-    await pipeline(source, fs.createWriteStream(archivePath, { flags: "wx", mode: 0o600 }));
+    const total = Number(result.ContentLength || 0);
+    let received = 0;
+    let lastReported = 0;
+    const progress = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        received += chunk.length;
+        if (total > 0 && (received - lastReported >= 512 * 1024 || received >= total)) {
+          lastReported = received;
+          setCloudRestoreStatus(dataDir, {
+            phase: "downloading",
+            message: `Baixando snapshot: ${Math.min(99, Math.floor(received / total * 100))}%`,
+            sourceKey,
+            progress: Math.min(45, Math.floor(received / total * 45))
+          });
+        }
+        callback(null, chunk);
+      }
+    });
+    await pipeline(source, progress, fs.createWriteStream(archivePath, { flags: "wx", mode: 0o600 }));
+    setCloudRestoreStatus(dataDir, { phase: "validating", message: "Arquivo baixado. Validando chave e integridade...", sourceKey, progress: 55 });
     await fs.promises.mkdir(stageDir, { mode: 0o700 });
-    await extractEncryptedArchive(archivePath, stageDir, config.encryptionKey);
-    return { stageDir, sourceKey, sourceModifiedAt: dailySnapshot?.LastModified?.toISOString() };
+    await extractEncryptedArchive(archivePath, stageDir, config.encryptionKey, (progress, message) => {
+      setCloudRestoreStatus(dataDir, { phase: "validating", message, sourceKey, progress });
+    });
+    setCloudRestoreStatus(dataDir, { phase: "ready", message: "Snapshot íntegro. Preparando a troca segura dos dados...", sourceKey, progress: 90 });
+    return { stageDir, sourceKey };
   } catch (error) {
     restoring = false;
+    setCloudRestoreStatus(dataDir, { phase: "failed", message: error instanceof Error ? error.message : "Falha ao preparar a restauração.", sourceKey: requestedSourceKey, progress: undefined });
     await fs.promises.rm(stageDir, { recursive: true, force: true }).catch(() => undefined);
     await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -369,6 +489,17 @@ export async function applyPreparedCloudRestore(dataDir: string, stageDir: strin
   const rollbackName = `.cloud-restore-rollback-${Date.now()}-${crypto.randomUUID()}`;
   const rollbackDir = path.join(dataDir, rollbackName);
   await fs.promises.mkdir(rollbackDir, { mode: 0o700 });
+  setCloudRestoreStatus(dataDir, { phase: "applying", message: "Aplicando os dados. O serviço será reiniciado em seguida...", sourceKey: restoreStatus?.sourceKey, progress: 95 });
+  const completedStatus: CloudRestoreStatus = {
+    phase: "completed",
+    message: "Restauração concluída. Os dados do snapshot foram carregados com sucesso.",
+    sourceKey: restoreStatus?.sourceKey,
+    startedAt: restoreStatus?.startedAt,
+    updatedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    progress: 100
+  };
+  await fs.promises.writeFile(path.join(stage, ".cloud-restore-status.json"), JSON.stringify(completedStatus), { mode: 0o600 });
   await writeJsonJournal(dataDir, { rollbackName, stageName: path.basename(stage), phase: "moving" });
   try {
     const currentEntries = await fs.promises.readdir(dataDir);
@@ -381,6 +512,7 @@ export async function applyPreparedCloudRestore(dataDir: string, stageDir: strin
     for (const name of restoredEntries) await fs.promises.rename(path.join(stage, name), path.join(dataDir, name));
     await fs.promises.rm(path.join(dataDir, RESTORE_JOURNAL), { force: true });
     await fs.promises.rm(stage, { recursive: true, force: true });
+    restoreStatus = completedStatus;
     console.log(`[BACKUP] RestauraÃ§Ã£o aplicada. CÃ³pia anterior preservada em ${rollbackName}.`);
   } catch (error) {
     await recoverInterruptedCloudRestore(dataDir);
@@ -422,6 +554,13 @@ export function recoverInterruptedCloudRestore(dataDir: string) {
   fs.rmSync(rollbackDir, { recursive: true, force: true });
   fs.rmSync(path.join(dataDir, journal.stageName), { recursive: true, force: true });
   fs.rmSync(journalPath, { force: true });
+  const recoveryStatus: CloudRestoreStatus = {
+    phase: "failed",
+    message: "A restauração foi interrompida. Os dados anteriores foram recuperados.",
+    updatedAt: new Date().toISOString()
+  };
+  fs.writeFileSync(path.join(dataDir, ".cloud-restore-status.json"), JSON.stringify(recoveryStatus), { mode: 0o600 });
+  restoreStatus = recoveryStatus;
   console.error("[BACKUP] RestauraÃ§Ã£o interrompida; dados anteriores recuperados automaticamente.");
 }
 

@@ -88,8 +88,8 @@ O aplicativo grava `rota-mind-backup-v1/latest.rmbak` a cada intervalo e mantém
 
 1. Crie o novo Web Service com a mesma versão do aplicativo e configure as variáveis `R2_*`, incluindo a mesma `R2_BACKUP_ENCRYPTION_KEY`.
 2. Entre no painel como administrador, abra **Config** e aguarde o serviço ficar online.
-3. Em **Backup externo**, clique em **Restaurar último backup** e confirme digitando `RESTAURAR DADOS`.
-4. O serviço baixa e valida o snapshot diário mais recente (recorrendo a `latest.rmbak` se ainda não houver snapshot diário), incluindo autenticação AES-GCM, antes de alterar qualquer arquivo. Preferir o diário evita que o primeiro backup de um serviço novo, ainda vazio, substitua a cópia que será restaurada. Se a chave não corresponder, o arquivo estiver corrompido ou não for seguro, a operação é recusada.
-5. Após a validação, o painel fecha conexões e reinicia o serviço com os dados do backup. O conteúdo que já existia no novo serviço é preservado no diretório `.cloud-restore-rollback-*` dentro de `DATA_DIR`.
+3. Em **Backup externo**, escolha o snapshot pelo nome, data e tamanho. O sistema pré-seleciona o maior arquivo para ajudar a localizar o backup antigo quando o serviço novo já criou uma cópia vazia. Confira a escolha antes de continuar e digite `RESTAURAR DADOS`.
+4. A tela mostra o andamento ao listar, baixar, validar e extrair o snapshot. O status fica salvo para continuar visível após o reinício; em caso de erro, a causa aparece no painel e os dados atuais não são substituídos.
+5. Após a validação, o painel fecha conexões e reinicia o serviço com os dados do snapshot escolhido. O conteúdo que já existia no novo serviço é preservado no diretório `.cloud-restore-rollback-*` dentro de `DATA_DIR`.
 
 Durante a restauração, o serviço fica indisponível por um curto período. Não remova o bucket nem altere a chave de criptografia. Uma cópia da chave precisa ser guardada fora do Render; sem ela, os backups não podem ser descriptografados.

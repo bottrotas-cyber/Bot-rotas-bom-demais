@@ -20,7 +20,7 @@ import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseN
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { computeConditionalDispatchBlockers, computeConditionalDispatchPriorities, ConditionalPriorityClient } from "./services/conditionalDispatchPriority";
 import { DispatchRaceCoordinator } from "./services/dispatchRaceCoordinator";
-import { applyPreparedCloudRestore, getCloudBackupStatus, prepareCloudRestore, recoverInterruptedCloudRestore, runCloudBackup, startCloudBackup, stopCloudBackup } from "./services/cloudBackup";
+import { applyPreparedCloudRestore, getCloudBackupStatus, getCloudRestoreStatus, listCloudBackupObjects, prepareCloudRestore, recoverInterruptedCloudRestore, runCloudBackup, setCloudRestoreStatus, startCloudBackup, stopCloudBackup } from "./services/cloudBackup";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, DispatchMatchupRule, LeaderContact, PanelUserRole, RouteDispatch, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
@@ -1481,7 +1481,7 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/admin/cloud-backup/restore") {
       if (!requireAdmin(authorizedEmail, response)) return;
-      const body = await readJsonBody<{ confirmation?: string }>(request);
+      const body = await readJsonBody<{ confirmation?: string; sourceKey?: string }>(request);
       if (body.confirmation !== "RESTAURAR DADOS") {
         sendJson(response, 400, { error: "ConfirmaÃ§Ã£o invÃ¡lida. A restauraÃ§Ã£o nÃ£o foi iniciada." });
         return;
@@ -1490,7 +1490,11 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 503, { error: "Configure as variÃ¡veis do R2 neste serviÃ§o antes de restaurar." });
         return;
       }
-      const preparedRestore = await prepareCloudRestore(dataDir);
+      if (!body.sourceKey) {
+        sendJson(response, 400, { error: "Selecione qual snapshot deseja restaurar." });
+        return;
+      }
+      const preparedRestore = await prepareCloudRestore(dataDir, body.sourceKey);
       sendJson(response, 202, {
         accepted: true,
         sourceKey: preparedRestore.sourceKey,
@@ -1498,9 +1502,26 @@ const server = http.createServer(async (request, response) => {
       });
       setTimeout(() => {
         void shutdown(async () => {
+          setCloudRestoreStatus(dataDir, { phase: "applying", message: "Servidor parando os bots para aplicar os dados...", sourceKey: preparedRestore.sourceKey, progress: 93 });
           await applyPreparedCloudRestore(dataDir, preparedRestore.stageDir);
         });
       }, 100);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/cloud-backup/objects") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      if (!getCloudBackupStatus().configured) {
+        sendJson(response, 503, { error: "Configure as variáveis do R2 neste serviço antes de listar os backups." });
+        return;
+      }
+      sendJson(response, 200, { objects: await listCloudBackupObjects() });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/cloud-backup/restore-status") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      sendJson(response, 200, getCloudRestoreStatus(dataDir));
       return;
     }
 

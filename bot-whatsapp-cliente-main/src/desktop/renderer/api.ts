@@ -191,6 +191,17 @@ export type AdminCloudBackupStatus = {
   running: boolean;
 };
 
+export type AdminCloudBackupObject = { key: string; size: number; lastModified?: string };
+export type AdminCloudRestoreStatus = {
+  phase: "idle" | "listing" | "waiting_backup" | "downloading" | "validating" | "ready" | "applying" | "completed" | "failed";
+  progress?: number;
+  sourceKey?: string;
+  message: string;
+  startedAt?: string;
+  updatedAt: string;
+  completedAt?: string;
+};
+
 export function getAdminCloudBackupStatus() {
   return fetchJson<AdminCloudBackupStatus>("/api/admin/cloud-backup");
 }
@@ -199,10 +210,18 @@ export function triggerAdminCloudBackup() {
   return fetchJson<{ accepted: boolean; status: AdminCloudBackupStatus }>("/api/admin/cloud-backup", { method: "POST" });
 }
 
-export function restoreAdminCloudBackup() {
+export function getAdminCloudBackupObjects() {
+  return fetchJson<{ objects: AdminCloudBackupObject[] }>("/api/admin/cloud-backup/objects");
+}
+
+export function getAdminCloudRestoreStatus() {
+  return fetchJson<AdminCloudRestoreStatus>("/api/admin/cloud-backup/restore-status");
+}
+
+export function restoreAdminCloudBackup(sourceKey: string) {
   return fetchJson<{ accepted: boolean; message: string; sourceKey: string }>("/api/admin/cloud-backup/restore", {
     method: "POST",
-    body: JSON.stringify({ confirmation: "RESTAURAR DADOS" })
+    body: JSON.stringify({ confirmation: "RESTAURAR DADOS", sourceKey })
   });
 }
 

@@ -53,7 +53,11 @@ import {
   clearAdminMaintenance,
   decideImageUsage,
   AdminCloudBackupStatus,
+  AdminCloudBackupObject,
+  AdminCloudRestoreStatus,
   getAdminCloudBackupStatus,
+  getAdminCloudBackupObjects,
+  getAdminCloudRestoreStatus,
   restoreAdminCloudBackup,
   getAdminMonitor,
   getAdminUserDetail,
@@ -148,6 +152,11 @@ function normalizeAdminText(value?: string) {
 
 function formatDate(value?: string) {
   return value ? new Date(value).toLocaleString("pt-BR") : "Sem registro";
+}
+
+function formatBackupSize(bytes: number) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 function formatShort(value?: string) {
@@ -690,6 +699,10 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const [cloudBackupStatus, setCloudBackupStatus] = useState<AdminCloudBackupStatus>();
   const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
   const [cloudRestoreBusy, setCloudRestoreBusy] = useState(false);
+  const [cloudBackupObjects, setCloudBackupObjects] = useState<AdminCloudBackupObject[]>([]);
+  const [cloudBackupListError, setCloudBackupListError] = useState("");
+  const [selectedCloudBackupKey, setSelectedCloudBackupKey] = useState("");
+  const [cloudRestoreStatus, setCloudRestoreStatus] = useState<AdminCloudRestoreStatus>();
   const [streamState, setStreamState] = useState<"connecting" | "live" | "fallback">("connecting");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -752,6 +765,39 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     }
   }
 
+  async function refreshCloudBackupObjects() {
+    try {
+      const result = await getAdminCloudBackupObjects();
+      setCloudBackupObjects(result.objects);
+      setCloudBackupListError("");
+      setSelectedCloudBackupKey((current) => result.objects.some((item) => item.key === current)
+        ? current
+        : [...result.objects].sort((left, right) => right.size - left.size)[0]?.key || "");
+    } catch (nextError) {
+      setCloudBackupListError(nextError instanceof Error ? nextError.message : "Não foi possível listar os snapshots do R2.");
+    }
+  }
+
+  async function refreshCloudRestoreStatus() {
+    try {
+      setCloudRestoreStatus(await getAdminCloudRestoreStatus());
+    } catch (nextError) {
+      if (isAuthError(nextError)) onLogout();
+    }
+  }
+
+  const restorePhaseLabels: Record<AdminCloudRestoreStatus["phase"], string> = {
+    idle: "Aguardando",
+    listing: "Localizando backup",
+    waiting_backup: "Aguardando backup atual",
+    downloading: "Baixando snapshot",
+    validating: "Validando integridade",
+    ready: "Pronto para aplicar",
+    applying: "Aplicando e reiniciando",
+    completed: "Concluída",
+    failed: "Falhou"
+  };
+
   async function createCloudBackupNow() {
     setCloudBackupBusy(true);
     try {
@@ -766,18 +812,24 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   }
 
   async function restoreCloudBackupNow() {
+    const selected = cloudBackupObjects.find((item) => item.key === selectedCloudBackupKey);
+    if (!selected) {
+      showToast("Selecione um snapshot listado no R2 antes de restaurar.");
+      return;
+    }
     const confirmed = window.prompt(
-      "ATENÇÃO: isso vai substituir os dados deste sistema pelos dados do último backup no R2. O serviço será reiniciado e os dados atuais serão preservados em uma pasta de segurança. Para continuar, digite: RESTAURAR DADOS"
+      `ATENÇÃO: será restaurado ${selected.key} (${formatBackupSize(selected.size)}), substituindo os dados atuais. Eles serão preservados em uma pasta de segurança. O serviço reiniciará. Digite RESTAURAR DADOS para continuar.`
     );
     if (confirmed !== "RESTAURAR DADOS") return;
-    if (!window.confirm("Última confirmação: restaurar o último backup e reiniciar o serviço agora?")) return;
+    if (!window.confirm("Última confirmação: restaurar este snapshot e reiniciar o serviço agora?")) return;
     setCloudRestoreBusy(true);
     try {
-      const result = await restoreAdminCloudBackup();
+      const result = await restoreAdminCloudBackup(selected.key);
       showToast(result.message);
     } catch (nextError) {
       showToast(nextError instanceof Error ? nextError.message : "Não foi possível validar o backup para restauração.");
       setCloudRestoreBusy(false);
+      void refreshCloudRestoreStatus();
     }
   }
 
@@ -791,8 +843,16 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   useEffect(() => {
     if (page !== "settings") return;
     void refreshCloudBackupStatus();
+    void refreshCloudBackupObjects();
+    void refreshCloudRestoreStatus();
     const timer = window.setInterval(() => void refreshCloudBackupStatus(), 10_000);
-    return () => window.clearInterval(timer);
+    const restoreTimer = window.setInterval(() => void refreshCloudRestoreStatus(), 1_000);
+    const objectsTimer = window.setInterval(() => void refreshCloudBackupObjects(), 30_000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(restoreTimer);
+      window.clearInterval(objectsTimer);
+    };
   }, [page]);
 
   const safeAdminUsers = Array.isArray(users?.users) ? users.users : [];
@@ -2111,9 +2171,36 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                   <button className="button primary" disabled={!cloudBackupStatus?.configured || cloudBackupBusy || cloudBackupStatus.running} type="button" onClick={() => void createCloudBackupNow()}>
                     {cloudBackupBusy || cloudBackupStatus?.running ? "Backup em andamento..." : "Criar backup agora"}
                   </button>
-                  <span>A restauração espera o backup atual terminar e usa a cópia diária mais recente.</span>
-                  <button className="button" disabled={!cloudBackupStatus?.configured || cloudRestoreBusy} type="button" onClick={() => void restoreCloudBackupNow()}>
-                    {cloudRestoreBusy ? "Preparando restauração..." : "Restaurar último backup"}
+                  <label className="adminx-backup-picker">
+                    <span>Escolha o snapshot. O maior arquivo foi selecionado como sugestão; confira a data e o tamanho.</span>
+                    <select value={selectedCloudBackupKey} onChange={(event) => setSelectedCloudBackupKey(event.target.value)} disabled={!cloudBackupObjects.length || cloudRestoreBusy}>
+                      {cloudBackupObjects.map((item) => {
+                        const largest = item.size === Math.max(...cloudBackupObjects.map((backup) => backup.size));
+                        return <option key={item.key} value={item.key}>{largest ? "Sugestão — " : ""}{item.key} · {formatBackupSize(item.size)} · {formatDate(item.lastModified)}</option>;
+                      })}
+                    </select>
+                  </label>
+                  {cloudBackupListError ? <span className="adminx-backup-error">{cloudBackupListError}</span> : null}
+                  {!cloudBackupListError && !cloudBackupObjects.length ? <span>Nenhum arquivo de backup encontrado no R2.</span> : null}
+                  <section className={`adminx-restore-progress phase-${cloudRestoreStatus?.phase || "idle"}`} aria-live="polite">
+                    <strong>Restauração: {cloudRestoreStatus ? restorePhaseLabels[cloudRestoreStatus.phase] : "Consultando"}</strong>
+                    <span>{cloudRestoreStatus?.message || "Consultando o andamento..."}</span>
+                    {cloudRestoreStatus?.sourceKey ? <small>Arquivo: {cloudRestoreStatus.sourceKey}</small> : null}
+                    {cloudRestoreStatus?.progress !== undefined && !["completed", "failed"].includes(cloudRestoreStatus.phase)
+                      ? <progress max={100} value={cloudRestoreStatus.progress * (100 / 95)} />
+                      : null}
+                    {(() => {
+                      const selected = cloudBackupObjects.find((item) => item.key === selectedCloudBackupKey);
+                      const largestSize = Math.max(0, ...cloudBackupObjects.map((item) => item.size));
+                      return selected && largestSize > 0 && selected.size < largestSize
+                        ? <small className="adminx-backup-warning">Este snapshot é menor que outro disponível. Se o backup do bot novo estiver vazio, selecione o snapshot maior e mais antigo.</small>
+                        : null;
+                    })()}
+                    {cloudRestoreStatus?.completedAt ? <small>Concluída em {formatDate(cloudRestoreStatus.completedAt)}</small> : null}
+                  </section>
+                  <span>Durante a restauração, o serviço reinicia. Os dados que já estavam nele são preservados.</span>
+                  <button className="button" disabled={!cloudBackupStatus?.configured || !selectedCloudBackupKey || cloudRestoreBusy || ["listing", "waiting_backup", "downloading", "validating", "ready", "applying"].includes(cloudRestoreStatus?.phase || "")} type="button" onClick={() => void restoreCloudBackupNow()}>
+                    {cloudRestoreBusy || ["listing", "waiting_backup", "downloading", "validating", "ready", "applying"].includes(cloudRestoreStatus?.phase || "") ? "Restauração em andamento..." : "Restaurar snapshot selecionado"}
                   </button>
                 </section>
                 <section className="adminx-settings-card">
