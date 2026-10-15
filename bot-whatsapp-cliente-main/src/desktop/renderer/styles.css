@@ -9408,6 +9408,8 @@ body,
 .adminx-cost-controls label { display: grid; gap: 6px; color: #a9b6c9; font-size: 0.8rem; }
 .adminx-cost-controls input { min-width: 0; width: 100%; }
 .adminx-cost-client footer { padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.adminx-online-indicator { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid rgba(34, 197, 94, 0.22); border-radius: 999px; color: #86efac; font-size: 0.78rem; font-weight: 700; white-space: nowrap; }
+.adminx-online-indicator i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.65); }
 .adminx-cost-ledger { display: grid; gap: 1px; overflow: hidden; border-radius: 10px; }
 .adminx-cost-ledger > div { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 16px; padding: 10px 12px; background: rgba(255,255,255,0.035); }
 .adminx-cost-ledger > div > span:first-child { display: grid; gap: 3px; }

@@ -318,6 +318,7 @@ export type ImageUsageClientSummary = {
   routePriceCents: number;
   prepaidRoutesRemaining: number;
   dueDay: number;
+  paymentEveryRoutes: number;
   lastPaymentAt?: string;
   unpaidRoutes: number;
   /** Kept for compatibility with older clients; all validated routes are now billed. */
@@ -328,7 +329,6 @@ export type ClientImageUsageSnapshot = {
   month: string;
   amountCents: number;
   unpaidRoutes: number;
-  prepaidRoutesRemaining: number;
   dueDay: number;
   dueDate?: string;
   daysUntilDue?: number;
@@ -341,7 +341,7 @@ export type AdminImageUsageSnapshot = {
   entries: ImageUsageEntry[];
   ledgerEntries?: ImageUsageEntry[];
   clients: ImageUsageClientSummary[];
-  totals: Omit<ImageUsageClientSummary, "clientEmail" | "month" | "defaultAmountCents" | "manualTotalAmountCents" | "billAllValidatedRoutes" | "routePriceCents" | "prepaidRoutesRemaining" | "dueDay" | "lastPaymentAt">;
+  totals: Omit<ImageUsageClientSummary, "clientEmail" | "month" | "defaultAmountCents" | "manualTotalAmountCents" | "billAllValidatedRoutes" | "routePriceCents" | "prepaidRoutesRemaining" | "dueDay" | "paymentEveryRoutes" | "lastPaymentAt">;
 };
 
 export type PanelUserRole = "client" | "admin";

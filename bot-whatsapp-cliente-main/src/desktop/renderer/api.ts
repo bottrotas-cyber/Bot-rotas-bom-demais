@@ -207,7 +207,7 @@ export function saveRouteBillingMode(clientEmail: string, enabled: boolean) {
   });
 }
 
-export function saveClientFinance(clientEmail: string, payload: { routePriceCents?: number; dueDay?: number; addPrepaidRoutes?: number }) {
+export function saveClientFinance(clientEmail: string, payload: { routePriceCents?: number; dueDay?: number; addPrepaidRoutes?: number; paymentEveryRoutes?: number }) {
   return fetchJson<AdminImageUsageSnapshot>(`/api/admin/client-finance/${encodeURIComponent(clientEmail)}`, {
     method: "PATCH",
     body: JSON.stringify(payload)

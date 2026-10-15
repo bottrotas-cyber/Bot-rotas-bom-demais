@@ -699,6 +699,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const [usageView, setUsageView] = useState<"pending" | "history">("pending");
   const [prepaidDrafts, setPrepaidDrafts] = useState<Record<string, string>>({});
   const [dueDayDrafts, setDueDayDrafts] = useState<Record<string, string>>({});
+  const [routeCadenceDrafts, setRouteCadenceDrafts] = useState<Record<string, string>>({});
 
   function showToast(message: string) {
     setToast(message);
@@ -949,6 +950,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     routePriceCents: 70,
     prepaidRoutesRemaining: 0,
     dueDay: 15,
+    paymentEveryRoutes: /fernando/i.test(client.email) ? 10 : 0,
     unpaidRoutes: 0
   });
   const visibleDebt = clientFilter === "all"
@@ -1047,7 +1049,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       else refresh();
       setEditor(undefined);
       showToast("Usuário salvo.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui salvar usuário.");
     } finally {
@@ -1071,7 +1072,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       setSelectedRoutes((current) => current.filter((id) => id !== routeId));
       setRouteDetail(undefined);
       showToast(decision === "validate" ? "Rota validada." : "Rota rejeitada.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui atualizar rota.");
     } finally {
@@ -1086,7 +1086,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       dirtyUsageAmounts.current.delete(id);
       setImageUsage(next);
       showToast(decision === "billable" ? "Imagem e rota validadas para cobrança." : decision === "excluded" ? "Imagem e rota excluídas da pendência." : "Análise devolvida para revisão.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui atualizar o consumo.");
     } finally {
@@ -1101,7 +1100,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       dirtyUsageAmounts.current.delete(`client:${clientEmail}`);
       setImageUsage(next);
       showToast("Valor padrão atualizado.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o valor padrão.");
     } finally {
@@ -1116,7 +1114,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       dirtyUsageAmounts.current.delete(`total:${clientEmail}`);
       setImageUsage(next);
       showToast("Total mensal do cliente atualizado.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o total mensal.");
     } finally {
@@ -1130,7 +1127,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       const next = await saveRouteBillingMode(clientEmail, enabled);
       setImageUsage(next);
       showToast(enabled ? "Todas as rotas validadas deste cliente entrarão no consumo." : "Cobrança limitada novamente às análises de imagem.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o controle de cobrança.");
     } finally {
@@ -1138,18 +1134,19 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     }
   }
 
-  async function saveFinanceSettings(clientEmail: string, action: "price" | "credits" | "due") {
+  async function saveFinanceSettings(clientEmail: string, action: "price" | "credits" | "due" | "cadence") {
     setBusy(true);
     try {
       const payload = action === "price"
         ? { routePriceCents: parseMoneyInput(usageAmounts[`client:${clientEmail}`] ?? ((pricingClients.find((client) => client.clientEmail === clientEmail)?.routePriceCents || 70) / 100).toFixed(2)) }
         : action === "credits"
           ? { addPrepaidRoutes: Math.max(1, Math.floor(Number(prepaidDrafts[clientEmail]) || 0)) }
-          : { dueDay: Math.max(1, Math.min(31, Math.floor(Number(dueDayDrafts[clientEmail]) || 15))) };
+          : action === "due"
+            ? { dueDay: Math.max(1, Math.min(31, Math.floor(Number(dueDayDrafts[clientEmail]) || 15))) }
+            : { paymentEveryRoutes: Math.max(0, Math.min(10_000, Math.floor(Number(routeCadenceDrafts[clientEmail] ?? pricingClients.find((client) => client.clientEmail === clientEmail)?.paymentEveryRoutes) || 0))) };
       const next = await saveClientFinance(clientEmail, payload);
       setImageUsage(next);
-      showToast(action === "credits" ? "Rotas pré-pagas adicionadas." : action === "due" ? "Vencimento atualizado." : "Preço por rota salvo.");
-      refresh();
+      showToast(action === "credits" ? "Rotas pré-pagas adicionadas." : action === "due" ? "Vencimento atualizado." : action === "cadence" ? "Ciclo de cobrança atualizado." : "Preço por rota salvo.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui atualizar o financeiro.");
     } finally {
@@ -1163,7 +1160,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     try {
       setImageUsage(await registerClientPayment(clientEmail));
       showToast("Pagamento registrado; histórico preservado.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui registrar o pagamento.");
     } finally {
@@ -1187,7 +1183,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
         setRoutes(nextRoutes);
         setSelectedRoutes([]);
         showToast(`${nextRoutes.changed} rota(s) rejeitada(s).`);
-        refresh();
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : "Ação em lote falhou.");
       } finally {
@@ -1218,7 +1213,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       setRoutes(nextRoutes);
       setSelectedRoutes([]);
       showToast(`${nextRoutes.changed} rota(s) atualizada(s).`);
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Ação em lote falhou.");
     } finally {
@@ -1240,7 +1234,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     try {
       setClientDetail(await runAdminUserBotAction(email, action));
       showToast("Ação enviada para o bot do cliente.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui executar ação no cliente.");
     } finally {
@@ -1300,7 +1293,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       setLeaders(response.leaders);
       setLeaderDraft({ name: "", phone: "" });
       showToast("Líder salvo.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui salvar líder.");
     } finally {
@@ -1314,7 +1306,6 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       const response = await removeAdminLeader(phone);
       setLeaders(response.leaders);
       showToast("Líder removido.");
-      refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui remover líder.");
     } finally {
@@ -1417,9 +1408,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
               <option value="30d">30 dias</option>
               <option value="all">Tudo</option>
             </select> : null}
-            <StatusPill tone={streamState === "live" ? "green" : streamState === "fallback" ? "yellow" : "blue"}>
-              {streamState === "live" ? "SSE ao vivo" : streamState === "fallback" ? "Polling" : "Conectando"}
-            </StatusPill>
+            <div className="adminx-online-indicator" role="status" aria-label="Painel online"><i />Online</div>
             <button
               className="button adminx-client-mode-button"
               disabled={busy || !clientModeTarget}
@@ -1803,7 +1792,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
               <MetricCard Icon={CheckCircle2} tone="green" title="Rotas validadas" value={validatedCount} detail="histórico geral" />
             </div>
             <article className="adminx-panel adminx-panel-wide">
-              <div className="adminx-panel-head"><div><p>Financeiro por cliente</p><h2>Preço, pré-pago e vencimento</h2></div><CircleDollarSign size={22} /></div>
+              <div className="adminx-panel-head"><div><p>Financeiro por cliente</p><h2>Preço e ciclo de cobrança</h2></div><CircleDollarSign size={22} /></div>
               <p className="adminx-costs-note">Toda rota validada é contabilizada. Créditos pré-pagos são consumidos primeiro; depois, o valor configurado por rota entra no saldo até o pagamento.</p>
               <div className="adminx-costs-list">
                 {pricingClients.map((client) => (
@@ -1814,6 +1803,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                       <button className="button primary" disabled={busy} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "price")}>Salvar preço</button>
                       <label><span>Dia de vencimento (1–31)</span><input inputMode="numeric" value={dueDayDrafts[client.clientEmail] ?? String(client.dueDay)} onChange={(event) => setDueDayDrafts((draft) => ({ ...draft, [client.clientEmail]: event.target.value }))} /></label>
                       <button className="button" disabled={busy} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "due")}>Salvar data</button>
+                      <label><span>Cobrar a cada N rotas (0 = por data)</span><input inputMode="numeric" min="0" value={routeCadenceDrafts[client.clientEmail] ?? String(client.paymentEveryRoutes)} onChange={(event) => setRouteCadenceDrafts((draft) => ({ ...draft, [client.clientEmail]: event.target.value }))} /></label>
+                      <button className="button" disabled={busy} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "cadence")}>Salvar ciclo</button>
                       <label><span>Adicionar rotas pré-pagas</span><input inputMode="numeric" placeholder="Ex.: 10" value={prepaidDrafts[client.clientEmail] || ""} onChange={(event) => setPrepaidDrafts((draft) => ({ ...draft, [client.clientEmail]: event.target.value }))} /></label>
                       <button className="button" disabled={busy || !Number(prepaidDrafts[client.clientEmail])} type="button" onClick={() => saveFinanceSettings(client.clientEmail, "credits")}>Adicionar créditos</button>
                     </div>
@@ -2052,7 +2043,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                 <section className="adminx-settings-card">
                   <Activity size={20} />
                   <strong>Status do tempo real</strong>
-                  <span>{streamState === "live" ? "SSE conectado e recebendo atualizações." : streamState === "fallback" ? "Usando polling como fallback." : "Conectando ao SSE."}</span>
+                  <span>O painel está online e sincronizando as atualizações.</span>
                   <button className="button" type="button" onClick={refresh}>Atualizar agora</button>
                 </section>
                 <section className="adminx-settings-card danger">

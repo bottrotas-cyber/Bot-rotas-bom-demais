@@ -21,7 +21,8 @@ test("contabiliza somente análises aprovadas e mantém testes excluídos", () =
 
   const clientSnapshot = store.clientSnapshot("cliente@teste.com");
   assert.equal(clientSnapshot.amountCents, 900);
-  assert.deepEqual(Object.keys(clientSnapshot).sort(), ["amountCents", "month"]);
+  assert.equal(clientSnapshot.unpaidRoutes, 1);
+  assert.equal("prepaidRoutesRemaining" in clientSnapshot, false);
 });
 
 test("não duplica consumo quando o mesmo evento de imagem chega novamente", () => {
@@ -30,6 +31,23 @@ test("não duplica consumo quando o mesmo evento de imagem chega novamente", () 
   store.record(input);
   store.record(input);
   assert.equal(store.snapshot().totals.total, 1);
+});
+
+test("Fernando fecha cobrança a cada 10 rotas validadas e reinicia o ciclo ao registrar pagamento", () => {
+  const store = new ImageUsageStore(tempFile("usage-cadence.json"));
+  const email = "fernando@teste.com";
+  assert.equal(store.paymentEveryRoutes(email), 10);
+  for (let index = 1; index <= 9; index += 1) {
+    store.decideValidatedRoute({ routeDispatchId: `rota-${index}`, clientEmail: email, messageId: `msg-${index}`, result: "detected", gaiola: `F-${index}` }, "admin@teste.com");
+  }
+  assert.equal(store.clientSnapshot(email).unpaidRoutes, 9);
+  assert.equal(store.clientSnapshot(email).billingReminder, undefined);
+  store.decideValidatedRoute({ routeDispatchId: "rota-10", clientEmail: email, messageId: "msg-10", result: "detected", gaiola: "F-10" }, "admin@teste.com");
+  assert.match(store.clientSnapshot(email).billingReminder, /10 rotas/);
+  assert.equal(store.clientSnapshot(email).unpaidRoutes, 10);
+  store.registerPayment(email);
+  assert.equal(store.clientSnapshot(email).unpaidRoutes, 0);
+  assert.equal(store.clientSnapshot(email).billingReminder, undefined);
 });
 
 test("usa R$ 0,70 como padrão e preserva telemetria da análise", () => {

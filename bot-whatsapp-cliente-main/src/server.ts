@@ -793,18 +793,22 @@ function approveRouteImageUsage(route: RouteDispatch | undefined, clientEmail: s
   if (!changed) return false;
   const entry = imageUsageStore.snapshot().ledgerEntries?.find((item) => item.routeDispatchId === route.id);
   if (entry?.paymentStatus === "prepaid") {
-    const remaining = imageUsageStore.clientSnapshot(clientEmail).prepaidRoutesRemaining;
     sendClientPush(clientEmail, {
-      title: "Rota confirmada — crédito pré-pago",
-      body: `${entry.gaiola || entry.route || "Rota"} entrou nas rotas antecipadas. Restam ${remaining}; sem nova cobrança agora.`,
-      tag: `route-prepaid:${route.id}`,
+      title: "Rota confirmada",
+      body: `${entry.gaiola || entry.route || "Rota"} foi confirmada e adicionada à sua relação de rotas.`,
+      tag: `route-confirmed:${route.id}`,
       url: "/?tab=image"
     });
   } else if (entry) {
+    const finance = imageUsageStore.clientSnapshot(clientEmail);
+    const cadence = imageUsageStore.paymentEveryRoutes(clientEmail);
+    const atBillingBatch = cadence > 0 && finance.unpaidRoutes > 0 && finance.unpaidRoutes % cadence === 0;
     sendClientPush(clientEmail, {
-      title: "Rota confirmada — adicionada ao saldo",
-      body: `${entry.gaiola || entry.route || "Rota"}: ${(entry.amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`,
-      tag: `route-billed:${route.id}`,
+      title: atBillingBatch ? `Ciclo de ${cadence} rotas concluído` : "Rota confirmada",
+      body: atBillingBatch
+        ? `${finance.unpaidRoutes} rotas confirmadas desde o último pagamento. Total em aberto: ${(finance.amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
+        : `${entry.gaiola || entry.route || "Rota"} foi confirmada.`,
+      tag: atBillingBatch ? `route-billing-batch:${clientEmail}:${finance.unpaidRoutes}` : `route-confirmed:${route.id}`,
       url: "/?tab=image"
     });
   }
@@ -960,13 +964,21 @@ async function clearAdminMaintenanceData(target: string, clientEmail?: string) {
   }
 }
 
+let adminSnapshotBroadcastScheduled = false;
 function broadcastAdminSnapshot() {
-  handleCriticalAdminNotifications();
-  if (!adminClients.size) return;
-  const payload = `data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`;
-  for (const client of adminClients) {
-    writeStream(client, payload);
-  }
+  if (!adminClients.size || adminSnapshotBroadcastScheduled) return;
+  adminSnapshotBroadcastScheduled = true;
+  setImmediate(() => {
+    adminSnapshotBroadcastScheduled = false;
+    if (!adminClients.size) return;
+    try {
+      handleCriticalAdminNotifications();
+      const payload = `data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`;
+      for (const client of adminClients) writeStream(client, payload);
+    } catch (error) {
+      console.error("Falha ao gerar snapshot do painel admin:", error);
+    }
+  });
 }
 
 function sendClientPush(email: string, notification: Parameters<PushNotificationStore["sendToEmails"]>[1]) {
@@ -1049,12 +1061,23 @@ function handleCriticalAdminNotifications() {
   lastAdminPendingRouteIds = currentIds;
 }
 
+const clientSnapshotBroadcastsScheduled = new Set<string>();
 function broadcastSnapshot(email: string) {
-  const snapshot = getClientSnapshot(email);
-  const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
-  for (const client of clients) {
-    if (client.email === email) writeStream(client.response, payload);
-  }
+  if (clientSnapshotBroadcastsScheduled.has(email)) return;
+  clientSnapshotBroadcastsScheduled.add(email);
+  setImmediate(() => {
+    clientSnapshotBroadcastsScheduled.delete(email);
+    if (![...clients].some((client) => client.email === email)) return;
+    try {
+      const snapshot = getClientSnapshot(email);
+      const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
+      for (const client of clients) {
+        if (client.email === email) writeStream(client.response, payload);
+      }
+    } catch (error) {
+      console.error("Falha ao gerar snapshot do cliente:", error);
+    }
+  });
 }
 
 function logSnapshot(email: string) {
@@ -1621,7 +1644,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/client-finance/")) {
       if (!requireAdmin(authorizedEmail, response)) return;
       const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/client-finance/", "")).trim().toLowerCase();
-      const body = await readJsonBody<{ routePriceCents?: number; dueDay?: number; addPrepaidRoutes?: number }>(request);
+      const body = await readJsonBody<{ routePriceCents?: number; dueDay?: number; addPrepaidRoutes?: number; paymentEveryRoutes?: number }>(request);
       if (!panelUsers.has(clientEmail)) throw new HttpError(404, "Cliente nÃ£o encontrado.");
       if (body.routePriceCents !== undefined) {
         if (!Number.isSafeInteger(body.routePriceCents) || body.routePriceCents < 0 || body.routePriceCents > 10_000_000) throw new HttpError(400, "Valor por rota invÃ¡lido.");
@@ -1634,6 +1657,10 @@ const server = http.createServer(async (request, response) => {
       if (body.addPrepaidRoutes !== undefined) {
         if (!Number.isInteger(body.addPrepaidRoutes) || body.addPrepaidRoutes < 1 || body.addPrepaidRoutes > 10_000) throw new HttpError(400, "Quantidade de rotas prÃ©-pagas invÃ¡lida.");
         imageUsageStore.addPrepaidRoutes(clientEmail, body.addPrepaidRoutes);
+      }
+      if (body.paymentEveryRoutes !== undefined) {
+        if (!Number.isInteger(body.paymentEveryRoutes) || body.paymentEveryRoutes < 0 || body.paymentEveryRoutes > 10_000) throw new HttpError(400, "A quantidade de rotas por ciclo deve ser entre 0 e 10000.");
+        imageUsageStore.setPaymentEveryRoutes(clientEmail, body.paymentEveryRoutes);
       }
       broadcastAdminSnapshot();
       broadcastSnapshot(clientEmail);

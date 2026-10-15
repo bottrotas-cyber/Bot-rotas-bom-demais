@@ -3739,7 +3739,7 @@ function PanelApp() {
               <div>
                 <p className="panel-label">Financeiro</p>
                 <h2>Saldo em aberto</h2>
-                <small>{snapshot.imageUsage?.unpaidRoutes || 0} rota(s) em aberto · {snapshot.imageUsage?.prepaidRoutesRemaining || 0} pré-paga(s) restante(s)</small>
+                <small>{snapshot.imageUsage?.unpaidRoutes || 0} rota(s) em aberto</small>
               </div>
               <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
             </div>

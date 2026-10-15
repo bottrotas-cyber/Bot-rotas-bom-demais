@@ -9,6 +9,7 @@ type StoredImageUsage = {
   routePrices: Record<string, number>;
   prepaidRoutes: Record<string, number>;
   dueDays: Record<string, number>;
+  paymentEveryRoutes: Record<string, number>;
   lastPayments: Record<string, string>;
 };
 
@@ -160,7 +161,7 @@ export class ImageUsageStore {
       this.data.billAllValidatedRoutes[next] = this.data.billAllValidatedRoutes[previous];
       delete this.data.billAllValidatedRoutes[previous];
     }
-    for (const map of [this.data.routePrices, this.data.prepaidRoutes, this.data.dueDays, this.data.lastPayments]) {
+    for (const map of [this.data.routePrices, this.data.prepaidRoutes, this.data.dueDays, this.data.paymentEveryRoutes, this.data.lastPayments]) {
       if (Object.prototype.hasOwnProperty.call(map, previous)) {
         map[next] = map[previous];
         delete map[previous];
@@ -223,7 +224,7 @@ export class ImageUsageStore {
   snapshot(month = this.currentMonth()): AdminImageUsageSnapshot {
     const entries = this.data.entries.filter((entry) => entry.createdAt.slice(0, 7) === month);
     const overrideEmails = Object.keys(this.data.monthlyTotalOverrides).filter((key) => key.startsWith(`${month}:`)).map((key) => key.slice(month.length + 1));
-    const emails = new Set([...Object.keys(this.data.defaultAmounts), ...Object.keys(this.data.routePrices), ...Object.keys(this.data.prepaidRoutes), ...Object.keys(this.data.dueDays), ...Object.keys(this.data.billAllValidatedRoutes), ...overrideEmails, ...this.data.entries.map((entry) => entry.clientEmail)]);
+    const emails = new Set([...Object.keys(this.data.defaultAmounts), ...Object.keys(this.data.routePrices), ...Object.keys(this.data.prepaidRoutes), ...Object.keys(this.data.dueDays), ...Object.keys(this.data.paymentEveryRoutes), ...Object.keys(this.data.billAllValidatedRoutes), ...overrideEmails, ...this.data.entries.map((entry) => entry.clientEmail)]);
     const clients = Array.from(emails).map((email) => this.summary(email, month, entries)).sort((a, b) => b.amountCents - a.amountCents || a.clientEmail.localeCompare(b.clientEmail));
     return {
       month,
@@ -254,21 +255,24 @@ export class ImageUsageStore {
       .sort((left, right) => Date.parse(right.reviewedAt || right.updatedAt) - Date.parse(left.reviewedAt || left.updatedAt))[0];
     const latestNoticeText = latestRoute
       ? latestRoute.paymentStatus === "prepaid"
-        ? `Rota ${latestRoute.gaiola || latestRoute.route || "confirmada"} validada e coberta pelo seu pré-pago. Restam ${this.data.prepaidRoutes[email] || 0} rota(s) antecipada(s); nenhum valor foi adicionado agora.`
+        ? `Rota ${latestRoute.gaiola || latestRoute.route || "confirmada"} confirmada e adicionada à sua relação de rotas.`
         : `Rota ${latestRoute.gaiola || latestRoute.route || "confirmada"} validada e adicionada ao seu saldo: ${(latestRoute.amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
       : undefined;
     return {
       month,
       amountCents,
       unpaidRoutes: unpaid.length,
-      prepaidRoutesRemaining: this.data.prepaidRoutes[email] || 0,
       dueDay: this.dueDay(email),
       dueDate: nextDue.toISOString(),
       daysUntilDue,
       latestNotice: latestRoute && latestNoticeText ? { id: latestRoute.routeDispatchId!, text: latestNoticeText } : undefined,
-      billingReminder: unpaid.length && daysUntilDue <= 3
-        ? `Faltam ${daysUntilDue} dia(s) para o vencimento (${nextDue.toLocaleDateString("pt-BR")}). ${unpaid.length} rota(s) em aberto: ${(amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
-        : undefined
+      billingReminder: this.paymentEveryRoutes(email) > 0
+        ? unpaid.length >= this.paymentEveryRoutes(email)
+          ? `${unpaid.length} rota(s) confirmadas desde o último pagamento. Ciclo de ${this.paymentEveryRoutes(email)} rotas: saldo atual ${(amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
+          : undefined
+        : unpaid.length && daysUntilDue <= 3
+          ? `Faltam ${daysUntilDue} dia(s) para o vencimento (${nextDue.toLocaleDateString("pt-BR")}). ${unpaid.length} rota(s) em aberto: ${(amountCents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.`
+          : undefined
     };
   }
 
@@ -293,6 +297,7 @@ export class ImageUsageStore {
       routePriceCents: this.routePrice(clientEmail),
       prepaidRoutesRemaining: this.data.prepaidRoutes[clientEmail] || 0,
       dueDay: this.dueDay(clientEmail),
+      paymentEveryRoutes: this.paymentEveryRoutes(clientEmail),
       lastPaymentAt: this.data.lastPayments[clientEmail],
       unpaidRoutes: unpaidEntries.length
     };
@@ -325,6 +330,18 @@ export class ImageUsageStore {
 
   private dueDay(clientEmail: string) {
     return this.data.dueDays[clientEmail] || 15;
+  }
+
+  paymentEveryRoutes(clientEmail: string) {
+    const email = clientEmail.trim().toLowerCase();
+    const configured = this.data.paymentEveryRoutes[email];
+    if (configured !== undefined) return configured;
+    return email.split("@")[0].normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes("fernando") ? 10 : 0;
+  }
+
+  setPaymentEveryRoutes(clientEmail: string, quantity: number) {
+    this.data.paymentEveryRoutes[clientEmail.trim().toLowerCase()] = Math.max(0, Math.min(10_000, Math.floor(quantity)));
+    this.save();
   }
 
   private nextDueDate(clientEmail: string, now: Date) {
@@ -365,7 +382,8 @@ export class ImageUsageStore {
             routePrices: parsed.routePrices && typeof parsed.routePrices === "object" ? parsed.routePrices : {},
             prepaidRoutes: parsed.prepaidRoutes && typeof parsed.prepaidRoutes === "object" ? parsed.prepaidRoutes : {},
             dueDays: parsed.dueDays && typeof parsed.dueDays === "object" ? parsed.dueDays : {},
-            lastPayments: parsed.lastPayments && typeof parsed.lastPayments === "object" ? parsed.lastPayments : {}
+            lastPayments: parsed.lastPayments && typeof parsed.lastPayments === "object" ? parsed.lastPayments : {},
+            paymentEveryRoutes: parsed.paymentEveryRoutes && typeof parsed.paymentEveryRoutes === "object" ? parsed.paymentEveryRoutes : {}
           };
         }
       } catch {
@@ -373,7 +391,7 @@ export class ImageUsageStore {
       }
     }
     if (fs.existsSync(this.filePath) || fs.existsSync(backupPath)) throw new Error("Registro de consumo inválido. Restaure um backup antes de gravar novos dados.");
-    return { entries: [], defaultAmounts: {}, monthlyTotalOverrides: {}, billAllValidatedRoutes: {}, routePrices: {}, prepaidRoutes: {}, dueDays: {}, lastPayments: {} };
+    return { entries: [], defaultAmounts: {}, monthlyTotalOverrides: {}, billAllValidatedRoutes: {}, routePrices: {}, prepaidRoutes: {}, dueDays: {}, paymentEveryRoutes: {}, lastPayments: {} };
   }
 
   private save() {
