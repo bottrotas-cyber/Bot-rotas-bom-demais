@@ -20,7 +20,7 @@ import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseN
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { computeConditionalDispatchBlockers, computeConditionalDispatchPriorities, ConditionalPriorityClient } from "./services/conditionalDispatchPriority";
 import { DispatchRaceCoordinator } from "./services/dispatchRaceCoordinator";
-import { getCloudBackupStatus, runCloudBackup, startCloudBackup, stopCloudBackup } from "./services/cloudBackup";
+import { applyPreparedCloudRestore, getCloudBackupStatus, prepareCloudRestore, recoverInterruptedCloudRestore, runCloudBackup, startCloudBackup, stopCloudBackup } from "./services/cloudBackup";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, DispatchMatchupRule, LeaderContact, PanelUserRole, RouteDispatch, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
@@ -61,6 +61,7 @@ function resolveDataDir() {
 }
 
 const dataDir = resolveDataDir();
+recoverInterruptedCloudRestore(dataDir);
 const currentRelease = getCurrentRelease();
 
 type PanelUserRecord = {
@@ -1478,6 +1479,35 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/api/admin/cloud-backup/restore") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody<{ confirmation?: string }>(request);
+      if (body.confirmation !== "RESTAURAR DADOS") {
+        sendJson(response, 400, { error: "ConfirmaÃ§Ã£o invÃ¡lida. A restauraÃ§Ã£o nÃ£o foi iniciada." });
+        return;
+      }
+      if (!getCloudBackupStatus().configured) {
+        sendJson(response, 503, { error: "Configure as variÃ¡veis do R2 neste serviÃ§o antes de restaurar." });
+        return;
+      }
+      if (getCloudBackupStatus().running) {
+        sendJson(response, 409, { error: "Aguarde o backup atual terminar antes de restaurar." });
+        return;
+      }
+      const preparedRestore = await prepareCloudRestore(dataDir);
+      sendJson(response, 202, {
+        accepted: true,
+        sourceKey: preparedRestore.sourceKey,
+        message: `Backup ${preparedRestore.sourceKey} validado. O serviÃ§o serÃ¡ pausado brevemente e reiniciado com os dados restaurados.`
+      });
+      setTimeout(() => {
+        void shutdown(async () => {
+          await applyPreparedCloudRestore(dataDir, preparedRestore.stageDir);
+        });
+      }, 100);
+      return;
+    }
+
     if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/admin/cloud-backup") {
       if (!requireAdmin(authorizedEmail, response)) return;
       if (request.method === "GET") {
@@ -2053,17 +2083,29 @@ server.listen(port, "0.0.0.0", () => {
 });
 
 let shuttingDown = false;
-async function shutdown() {
+async function shutdown(afterStop?: () => Promise<void>) {
   if (shuttingDown) return;
   shuttingDown = true;
   clearInterval(streamHeartbeat);
   for (const response of streamAuth.keys()) response.end();
   const deadline = setTimeout(() => process.exit(1), 10_000);
   deadline.unref();
-  console.log("Encerrando bots...");
+  console.log("Encerrando painel e bots...");
   stopCloudBackup();
-  await Promise.all(Array.from(bots.values()).map((item) => item.shutdown().catch(() => undefined)));
-  server.close(() => process.exit(0));
+  server.close(() => {
+    void (async () => {
+      try {
+        await Promise.all(Array.from(bots.values()).map((item) => item.shutdown().catch(() => undefined)));
+        if (afterStop) await afterStop();
+        clearTimeout(deadline);
+        process.exit(0);
+      } catch (error) {
+        console.error(`[BACKUP] RestauraÃ§Ã£o nÃ£o concluÃ­da: ${error instanceof Error ? error.message : String(error)}`);
+        clearTimeout(deadline);
+        process.exit(1);
+      }
+    })();
+  });
   server.closeIdleConnections();
 }
 

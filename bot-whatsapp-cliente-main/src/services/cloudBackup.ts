@@ -1,10 +1,10 @@
-import { DeleteObjectsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import { pipeline } from "stream/promises";
-import { createGzip } from "zlib";
+import { createGunzip, createGzip } from "zlib";
 import * as tar from "tar-stream";
 
 const BACKUP_PREFIX = "rota-mind-backup-v1";
@@ -42,9 +42,11 @@ let status: CloudBackupStatus = {
   running: false
 };
 let activeBackup: Promise<void> | undefined;
+let restoring = false;
 let schedule: NodeJS.Timeout | undefined;
 let client: S3Client | undefined;
 let config: BackupConfig | undefined;
+let dailySnapshotDate: string | undefined;
 
 function parseEncryptionKey(value: string | undefined): Buffer | undefined {
   const normalized = String(value || "").trim();
@@ -85,7 +87,8 @@ function loadConfig(env: NodeJS.ProcessEnv): BackupConfig | undefined {
 
 function shouldSkip(relativePath: string, isDirectory: boolean) {
   const segments = relativePath.split(/[\\/]+/).filter(Boolean);
-  if (segments.some((segment) => ["ocr-result-cache", ".git", "node_modules", "cloud-backup-temp"].includes(segment))) return true;
+  if (segments.some((segment) => ["ocr-result-cache", ".git", "node_modules", "cloud-backup-temp"].includes(segment)
+    || segment.startsWith(".cloud-restore-"))) return true;
   const name = segments[segments.length - 1] || "";
   if (/^ocr-global-.*\.lock$/i.test(name) || /\.tmp$/i.test(name)) return true;
   if (!isDirectory && /(?:^|\/)cloud-backup\.(?:tar\.gz|enc)$/i.test(relativePath)) return true;
@@ -206,6 +209,7 @@ export function getCloudBackupStatus(): CloudBackupStatus {
 }
 
 export async function runCloudBackup(dataDir: string) {
+  if (restoring) throw new Error("Backup pausado durante uma restauraÃ§Ã£o.");
   if (!config || !client) throw new Error("Backup na nuvem ainda não está configurado no servidor.");
   if (activeBackup) return activeBackup;
   activeBackup = (async () => {
@@ -220,7 +224,18 @@ export async function runCloudBackup(dataDir: string) {
       await uploadBackup(encryptedPath, latestKey, date);
       const day = date.slice(0, 10);
       const dailyKey = `${BACKUP_PREFIX}/daily/${day}.rmbak`;
-      await uploadBackup(encryptedPath, dailyKey, date);
+      if (dailySnapshotDate !== day) {
+        let dailyExists = false;
+        try {
+          await client!.send(new HeadObjectCommand({ Bucket: config!.bucket, Key: dailyKey }));
+          dailyExists = true;
+        } catch (error) {
+          const response = error as { $metadata?: { httpStatusCode?: number }; name?: string };
+          if (response.$metadata?.httpStatusCode !== 404 && response.name !== "NotFound" && response.name !== "NoSuchKey") throw error;
+        }
+        if (!dailyExists) await uploadBackup(encryptedPath, dailyKey, date);
+        dailySnapshotDate = day;
+      }
       try {
         await pruneOldDailyBackups();
       } catch (error) {
@@ -242,6 +257,172 @@ export async function runCloudBackup(dataDir: string) {
   } finally {
     activeBackup = undefined;
   }
+}
+
+const RESTORE_JOURNAL = ".cloud-restore-journal.json";
+const MAX_RESTORE_BYTES = 20 * 1024 * 1024 * 1024;
+
+function safeArchivePath(root: string, name: string) {
+  if (!name || name.includes("\\") || name.startsWith("/") || /^[a-z]:/i.test(name)) {
+    throw new Error("O backup contÃ©m um caminho invÃ¡lido.");
+  }
+  const segments = name.split("/").filter(Boolean);
+  if (!segments.length || segments.some((segment) => segment === "." || segment === ".." || segment.startsWith(".cloud-restore-"))) {
+    throw new Error("O backup contÃ©m um caminho invÃ¡lido.");
+  }
+  const target = path.resolve(root, ...segments);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) throw new Error("O backup tenta sair da pasta de dados.");
+  return target;
+}
+
+export async function extractEncryptedArchive(archivePath: string, destination: string, encryptionKey: Buffer) {
+  const file = await fs.promises.open(archivePath, "r");
+  try {
+    const stat = await file.stat();
+    if (stat.size < 36) throw new Error("O arquivo de backup estÃ¡ incompleto.");
+    const header = Buffer.alloc(20);
+    const tag = Buffer.alloc(16);
+    await file.read(header, 0, 20, 0);
+    await file.read(tag, 0, 16, stat.size - 16);
+    if (!header.subarray(0, 8).equals(BACKUP_MAGIC)) throw new Error("Formato de backup desconhecido.");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", encryptionKey, header.subarray(8, 20));
+    decipher.setAuthTag(tag);
+    const extract = tar.extract();
+    let entryCount = 0;
+    let expandedBytes = 0;
+    extract.on("entry", (entryHeader, entry, next) => {
+      try {
+        const target = safeArchivePath(destination, entryHeader.name);
+        if (entryHeader.type === "directory") {
+          entryCount++;
+          fs.mkdirSync(target, { recursive: true, mode: entryHeader.mode || 0o700 });
+          entry.resume();
+          next();
+          return;
+        }
+        if (entryHeader.type !== "file" && entryHeader.type !== "contiguous-file") throw new Error("O backup contÃ©m um tipo de arquivo nÃ£o permitido.");
+        const size = Number(entryHeader.size || 0);
+        if (!Number.isSafeInteger(size) || size < 0 || expandedBytes + size > MAX_RESTORE_BYTES) throw new Error("O backup ultrapassa o limite de restauraÃ§Ã£o de 20 GB.");
+        expandedBytes += size;
+        entryCount++;
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+        const output = fs.createWriteStream(target, { flags: "wx", mode: (entryHeader.mode || 0o600) & 0o700 });
+        void pipeline(entry, output).then(() => next(), next);
+      } catch (error) {
+        entry.resume();
+        next(error instanceof Error ? error : new Error("NÃ£o foi possÃ­vel validar o backup."));
+      }
+    });
+    await pipeline(
+      fs.createReadStream(archivePath, { start: 20, end: stat.size - 17 }),
+      decipher,
+      createGunzip(),
+      extract
+    );
+    if (!entryCount) throw new Error("O backup nÃ£o contÃ©m dados para restaurar.");
+  } finally {
+    await file.close();
+  }
+}
+
+/** Downloads and fully validates latest.rmbak, extracting it to a private staging folder. */
+export async function prepareCloudRestore(dataDir: string) {
+  if (!config || !client) throw new Error("O backup na nuvem nÃ£o estÃ¡ configurado neste servidor.");
+  if (restoring) throw new Error("JÃ¡ existe uma restauraÃ§Ã£o em andamento.");
+  restoring = true;
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "rota-mind-restore-"));
+  const archivePath = path.join(tempDir, "latest.rmbak");
+  const stageDir = path.join(dataDir, `.cloud-restore-stage-${crypto.randomUUID()}`);
+  try {
+    if (activeBackup) await activeBackup;
+    const daily = await client.send(new ListObjectsV2Command({
+      Bucket: config.bucket,
+      Prefix: `${BACKUP_PREFIX}/daily/`
+    }));
+    const dailySnapshot = (daily.Contents || [])
+      .filter((item) => item.Key?.endsWith(".rmbak"))
+      .sort((left, right) => (right.LastModified?.getTime() || 0) - (left.LastModified?.getTime() || 0))[0];
+    const sourceKey = dailySnapshot?.Key || `${BACKUP_PREFIX}/latest.rmbak`;
+    const result = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: sourceKey }));
+    if (!result.Body) throw new Error("O R2 retornou um backup vazio.");
+    const source = result.Body as NodeJS.ReadableStream;
+    await pipeline(source, fs.createWriteStream(archivePath, { flags: "wx", mode: 0o600 }));
+    await fs.promises.mkdir(stageDir, { mode: 0o700 });
+    await extractEncryptedArchive(archivePath, stageDir, config.encryptionKey);
+    return { stageDir, sourceKey, sourceModifiedAt: dailySnapshot?.LastModified?.toISOString() };
+  } catch (error) {
+    restoring = false;
+    await fs.promises.rm(stageDir, { recursive: true, force: true }).catch(() => undefined);
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/** Applies a previously validated restore after the HTTP server and bot workers have stopped. */
+export async function applyPreparedCloudRestore(dataDir: string, stageDir: string) {
+  const stage = path.resolve(stageDir);
+  if (path.dirname(stage) !== path.resolve(dataDir) || !path.basename(stage).startsWith(".cloud-restore-stage-")) {
+    throw new Error("Pasta temporÃ¡ria de restauraÃ§Ã£o invÃ¡lida.");
+  }
+  const rollbackName = `.cloud-restore-rollback-${Date.now()}-${crypto.randomUUID()}`;
+  const rollbackDir = path.join(dataDir, rollbackName);
+  await fs.promises.mkdir(rollbackDir, { mode: 0o700 });
+  await writeJsonJournal(dataDir, { rollbackName, stageName: path.basename(stage), phase: "moving" });
+  try {
+    const currentEntries = await fs.promises.readdir(dataDir);
+    for (const name of currentEntries) {
+      if (name === rollbackName || name === path.basename(stage) || name === RESTORE_JOURNAL) continue;
+      await fs.promises.rename(path.join(dataDir, name), path.join(rollbackDir, name));
+    }
+    await writeJsonJournal(dataDir, { rollbackName, stageName: path.basename(stage), phase: "installing" });
+    const restoredEntries = await fs.promises.readdir(stage);
+    for (const name of restoredEntries) await fs.promises.rename(path.join(stage, name), path.join(dataDir, name));
+    await fs.promises.rm(path.join(dataDir, RESTORE_JOURNAL), { force: true });
+    await fs.promises.rm(stage, { recursive: true, force: true });
+    console.log(`[BACKUP] RestauraÃ§Ã£o aplicada. CÃ³pia anterior preservada em ${rollbackName}.`);
+  } catch (error) {
+    await recoverInterruptedCloudRestore(dataDir);
+    restoring = false;
+    throw error;
+  }
+}
+
+async function writeJsonJournal(dataDir: string, journal: { rollbackName: string; stageName: string; phase: "moving" | "installing" }) {
+  const tempPath = path.join(dataDir, `${RESTORE_JOURNAL}.tmp`);
+  await fs.promises.writeFile(tempPath, JSON.stringify(journal), { mode: 0o600 });
+  await fs.promises.rename(tempPath, path.join(dataDir, RESTORE_JOURNAL));
+}
+
+/** If the process dies mid-swap, restore the original files before stores open on boot. */
+export function recoverInterruptedCloudRestore(dataDir: string) {
+  const journalPath = path.join(dataDir, RESTORE_JOURNAL);
+  let journal: { rollbackName?: string; stageName?: string; phase?: "moving" | "installing" };
+  try {
+    journal = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+  } catch {
+    return;
+  }
+  if (!journal.rollbackName?.startsWith(".cloud-restore-rollback-") || !journal.stageName?.startsWith(".cloud-restore-stage-")
+    || !["moving", "installing"].includes(journal.phase || "")) {
+    throw new Error("Journal de restauraÃ§Ã£o invÃ¡lido; os dados foram mantidos sem alteraÃ§Ã£o.");
+  }
+  const rollbackDir = path.join(dataDir, journal.rollbackName);
+  if (!fs.existsSync(rollbackDir)) throw new Error("CÃ³pia de seguranÃ§a da restauraÃ§Ã£o ausente; interrompendo inicializaÃ§Ã£o para proteger os dados.");
+  const rollbackEntries = fs.readdirSync(rollbackDir);
+  const currentEntries = fs.readdirSync(dataDir);
+  if (journal.phase === "installing") {
+    for (const name of currentEntries) {
+      if (name === journal.rollbackName || name === journal.stageName || name === RESTORE_JOURNAL) continue;
+      fs.rmSync(path.join(dataDir, name), { recursive: true, force: true });
+    }
+  }
+  for (const name of rollbackEntries) fs.renameSync(path.join(rollbackDir, name), path.join(dataDir, name));
+  fs.rmSync(rollbackDir, { recursive: true, force: true });
+  fs.rmSync(path.join(dataDir, journal.stageName), { recursive: true, force: true });
+  fs.rmSync(journalPath, { force: true });
+  console.error("[BACKUP] RestauraÃ§Ã£o interrompida; dados anteriores recuperados automaticamente.");
 }
 
 export function startCloudBackup(dataDir: string, env: NodeJS.ProcessEnv = process.env) {

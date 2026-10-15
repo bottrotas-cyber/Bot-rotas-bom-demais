@@ -82,4 +82,14 @@ Configure no Render:
 - `R2_BACKUP_INTERVAL_MINUTES`: intervalo (mínimo 5; padrão 15).
 - `R2_BACKUP_RETENTION_DAYS`: retenção dos snapshots diários (entre 7 e 365; padrão 30). O objeto `latest` permanece separado.
 
-O aplicativo grava `rota-mind-backup-v1/latest.rmbak` e snapshots diários em `rota-mind-backup-v1/daily/`. O endpoint autenticado `GET /api/admin/cloud-backup` informa o status sem exibir segredos; `POST` nesse mesmo endpoint solicita um snapshot manual. O primeiro envio automático ocorre 30 segundos após a inicialização. A restauração ainda requer uma etapa própria, o bot parado e a mesma chave de criptografia.
+O aplicativo grava `rota-mind-backup-v1/latest.rmbak` a cada intervalo e mantém um snapshot diário protegido em `rota-mind-backup-v1/daily/` (não sobrescreve o snapshot do mesmo dia). O endpoint autenticado `GET /api/admin/cloud-backup` informa o status sem exibir segredos; `POST` nesse mesmo endpoint solicita um snapshot manual. O primeiro envio automático ocorre 30 segundos após a inicialização.
+
+### Restaurar em outro serviço Render
+
+1. Crie o novo Web Service com a mesma versão do aplicativo e configure as variáveis `R2_*`, incluindo a mesma `R2_BACKUP_ENCRYPTION_KEY`.
+2. Entre no painel como administrador, abra **Config** e aguarde o serviço ficar online.
+3. Em **Backup externo**, clique em **Restaurar último backup** e confirme digitando `RESTAURAR DADOS`.
+4. O serviço baixa e valida o snapshot diário mais recente (recorrendo a `latest.rmbak` se ainda não houver snapshot diário), incluindo autenticação AES-GCM, antes de alterar qualquer arquivo. Preferir o diário evita que o primeiro backup de um serviço novo, ainda vazio, substitua a cópia que será restaurada. Se a chave não corresponder, o arquivo estiver corrompido ou não for seguro, a operação é recusada.
+5. Após a validação, o painel fecha conexões e reinicia o serviço com os dados do backup. O conteúdo que já existia no novo serviço é preservado no diretório `.cloud-restore-rollback-*` dentro de `DATA_DIR`.
+
+Durante a restauração, o serviço fica indisponível por um curto período. Não remova o bucket nem altere a chave de criptografia. Uma cópia da chave precisa ser guardada fora do Render; sem ela, os backups não podem ser descriptografados.

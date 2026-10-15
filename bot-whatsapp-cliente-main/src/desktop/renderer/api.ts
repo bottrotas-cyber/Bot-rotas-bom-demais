@@ -199,6 +199,13 @@ export function triggerAdminCloudBackup() {
   return fetchJson<{ accepted: boolean; status: AdminCloudBackupStatus }>("/api/admin/cloud-backup", { method: "POST" });
 }
 
+export function restoreAdminCloudBackup() {
+  return fetchJson<{ accepted: boolean; message: string; sourceKey: string }>("/api/admin/cloud-backup/restore", {
+    method: "POST",
+    body: JSON.stringify({ confirmation: "RESTAURAR DADOS" })
+  });
+}
+
 export function decideImageUsage(id: string, payload: { decision: "pending" | "billable" | "excluded"; amountCents?: number; note?: string }) {
   return fetchJson<AdminImageUsageSnapshot>(`/api/admin/image-usage/${encodeURIComponent(id)}`, {
     method: "PATCH",

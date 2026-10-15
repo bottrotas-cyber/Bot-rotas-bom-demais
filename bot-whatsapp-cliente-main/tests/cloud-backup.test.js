@@ -6,7 +6,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { gunzipSync } = require("node:zlib");
 
-const { createEncryptedArchive } = require("../dist/services/cloudBackup.js");
+const { createEncryptedArchive, extractEncryptedArchive, recoverInterruptedCloudRestore } = require("../dist/services/cloudBackup.js");
 
 test("backup criptografado compacta os dados persistentes e exclui cache descartavel", async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rota-backup-test-"));
@@ -48,6 +48,60 @@ test("backup criptografado compacta os dados persistentes e exclui cache descart
     });
   } finally {
     sessionDb.close();
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("restaura arquivo criptografado validando conteÃºdo e autenticaÃ§Ã£o", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rota-restore-test-"));
+  const source = path.join(temp, "source");
+  const output = path.join(temp, "snapshot.rmbak");
+  const destination = path.join(temp, "restored");
+  fs.mkdirSync(path.join(source, "users"), { recursive: true });
+  fs.writeFileSync(path.join(source, "users", "clientes.json"), "clientes e preferencias");
+  fs.mkdirSync(destination);
+  try {
+    const key = crypto.randomBytes(32);
+    await createEncryptedArchive(source, output, key);
+    await extractEncryptedArchive(output, destination, key);
+    assert.equal(fs.readFileSync(path.join(destination, "users", "clientes.json"), "utf8"), "clientes e preferencias");
+    await assert.rejects(extractEncryptedArchive(output, path.join(temp, "wrong-key"), crypto.randomBytes(32)));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("recupera dados originais se o processo cair durante a troca", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rota-restore-recovery-"));
+  const rollbackName = ".cloud-restore-rollback-test";
+  const stageName = ".cloud-restore-stage-test";
+  const rollback = path.join(temp, rollbackName);
+  fs.mkdirSync(rollback);
+  fs.mkdirSync(path.join(temp, stageName));
+  fs.writeFileSync(path.join(rollback, "clientes.json"), "dados anteriores");
+  fs.writeFileSync(path.join(temp, "clientes.json"), "dados parciais restaurados");
+  fs.writeFileSync(path.join(temp, ".cloud-restore-journal.json"), JSON.stringify({ rollbackName, stageName, phase: "installing" }));
+  try {
+    recoverInterruptedCloudRestore(temp);
+    assert.equal(fs.readFileSync(path.join(temp, "clientes.json"), "utf8"), "dados anteriores");
+    assert.equal(fs.existsSync(path.join(temp, ".cloud-restore-journal.json")), false);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("interrupção antes da troca não remove os dados ainda originais", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "rota-restore-before-swap-"));
+  const rollbackName = ".cloud-restore-rollback-test";
+  const stageName = ".cloud-restore-stage-test";
+  fs.mkdirSync(path.join(temp, rollbackName));
+  fs.mkdirSync(path.join(temp, stageName));
+  fs.writeFileSync(path.join(temp, "clientes.json"), "dados originais intactos");
+  fs.writeFileSync(path.join(temp, ".cloud-restore-journal.json"), JSON.stringify({ rollbackName, stageName, phase: "moving" }));
+  try {
+    recoverInterruptedCloudRestore(temp);
+    assert.equal(fs.readFileSync(path.join(temp, "clientes.json"), "utf8"), "dados originais intactos");
+  } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });

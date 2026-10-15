@@ -54,6 +54,7 @@ import {
   decideImageUsage,
   AdminCloudBackupStatus,
   getAdminCloudBackupStatus,
+  restoreAdminCloudBackup,
   getAdminMonitor,
   getAdminUserDetail,
   isAuthError,
@@ -688,6 +689,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const [busy, setBusy] = useState(false);
   const [cloudBackupStatus, setCloudBackupStatus] = useState<AdminCloudBackupStatus>();
   const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
+  const [cloudRestoreBusy, setCloudRestoreBusy] = useState(false);
   const [streamState, setStreamState] = useState<"connecting" | "live" | "fallback">("connecting");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
@@ -760,6 +762,22 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       showToast(nextError instanceof Error ? nextError.message : "Não foi possível iniciar o backup.");
     } finally {
       setCloudBackupBusy(false);
+    }
+  }
+
+  async function restoreCloudBackupNow() {
+    const confirmed = window.prompt(
+      "ATENÇÃO: isso vai substituir os dados deste sistema pelos dados do último backup no R2. O serviço será reiniciado e os dados atuais serão preservados em uma pasta de segurança. Para continuar, digite: RESTAURAR DADOS"
+    );
+    if (confirmed !== "RESTAURAR DADOS") return;
+    if (!window.confirm("Última confirmação: restaurar o último backup e reiniciar o serviço agora?")) return;
+    setCloudRestoreBusy(true);
+    try {
+      const result = await restoreAdminCloudBackup();
+      showToast(result.message);
+    } catch (nextError) {
+      showToast(nextError instanceof Error ? nextError.message : "NÃ£o foi possÃ­vel validar o backup para restauraÃ§Ã£o.");
+      setCloudRestoreBusy(false);
     }
   }
 
@@ -2092,6 +2110,10 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                   </span>
                   <button className="button primary" disabled={!cloudBackupStatus?.configured || cloudBackupBusy || cloudBackupStatus.running} type="button" onClick={() => void createCloudBackupNow()}>
                     {cloudBackupBusy || cloudBackupStatus?.running ? "Backup em andamento..." : "Criar backup agora"}
+                  </button>
+                  <span>A restauraÃ§Ã£o usa a cÃ³pia diÃ¡ria mais recente, protegida contra sobrescrita por um serviÃ§o novo.</span>
+                  <button className="button" disabled={!cloudBackupStatus?.configured || cloudBackupBusy || cloudRestoreBusy || cloudBackupStatus.running} type="button" onClick={() => void restoreCloudBackupNow()}>
+                    {cloudRestoreBusy ? "Preparando restauraÃ§Ã£o..." : "Restaurar Ãºltimo backup"}
                   </button>
                 </section>
                 <section className="adminx-settings-card">
