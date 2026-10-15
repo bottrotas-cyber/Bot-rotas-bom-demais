@@ -914,7 +914,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     })
     .sort((a, b) => a.statusRank - b.statusRank || a.client.email.localeCompare(b.client.email));
   const validatedCount = visibleRoutes.filter((route) => routeDecision(route) === "validated").length;
-  const allValidatedRoutes = routes.routes.filter((route) => routeDecision(route) === "validated" && (clientFilter === "all" || route.clientEmail === clientFilter));
+  const allValidatedRoutes = visibleRoutes.filter((route) => routeDecision(route) === "validated");
   const validationRate = visibleRoutes.length ? Math.round((validatedCount / visibleRoutes.length) * 100) : 0;
   const ocrRoutes = visibleRoutes.filter((route) => Boolean(route.ocr));
   const sentRoutes = visibleRoutes.filter((route) => route.confirmedCount > 0);
