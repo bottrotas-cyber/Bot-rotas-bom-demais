@@ -43,6 +43,7 @@
     "npmRebuild": false
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1152.0",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "7.0.0-rc13",
     "better-sqlite3": "^13.0.3",
@@ -53,6 +54,7 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "sharp": "^0.35.4",
+    "tar-stream": "^3.2.2",
     "tesseract.js": "^7.0.0",
     "web-push": "^3.6.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
@@ -63,6 +65,7 @@
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
+    "@types/tar-stream": "^3.1.5",
     "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.1",

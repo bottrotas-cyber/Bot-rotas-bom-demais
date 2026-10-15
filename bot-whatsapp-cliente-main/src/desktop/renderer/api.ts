@@ -179,6 +179,26 @@ export function getAdminMonitor() {
   return fetchJson<AdminMonitorSnapshot>("/api/admin/monitor");
 }
 
+export type AdminCloudBackupStatus = {
+  enabled: boolean;
+  configured: boolean;
+  intervalMinutes: number;
+  retentionDays: number;
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  lastObjectKey?: string;
+  lastError?: string;
+  running: boolean;
+};
+
+export function getAdminCloudBackupStatus() {
+  return fetchJson<AdminCloudBackupStatus>("/api/admin/cloud-backup");
+}
+
+export function triggerAdminCloudBackup() {
+  return fetchJson<{ accepted: boolean; status: AdminCloudBackupStatus }>("/api/admin/cloud-backup", { method: "POST" });
+}
+
 export function decideImageUsage(id: string, payload: { decision: "pending" | "billable" | "excluded"; amountCents?: number; note?: string }) {
   return fetchJson<AdminImageUsageSnapshot>(`/api/admin/image-usage/${encodeURIComponent(id)}`, {
     method: "PATCH",

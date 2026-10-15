@@ -68,3 +68,18 @@ No plano Free, o Render dorme após inatividade. Se você configurar `KEEP_ALIVE
 4. Escaneie o QR Code pelo WhatsApp.
 5. Atualize grupos, salve grupo alvo/teste e mensagens.
 6. Use `Iniciar bot` ou `Iniciar teste`.
+
+## Backup externo criptografado no Cloudflare R2
+
+O servidor pode enviar snapshots do `DATA_DIR` para um bucket R2 privado. Os arquivos são compactados e criptografados com AES-256-GCM antes do upload. Mantenha a chave de criptografia fora do GitHub e guarde uma cópia independente para conseguir restaurar os dados em outro serviço.
+
+Configure no Render:
+
+- `R2_ENDPOINT`: endpoint S3 padrão mostrado no Cloudflare R2.
+- `R2_BUCKET`: nome do bucket, por exemplo `rota-mind-backups`.
+- `R2_ACCESS_KEY_ID` e `R2_SECRET_ACCESS_KEY`: credenciais S3 do token `Object Read & Write`, restrito a esse bucket.
+- `R2_BACKUP_ENCRYPTION_KEY`: chave aleatória de 32 bytes codificada em hexadecimal (64 caracteres). Gere-a localmente com `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` e guarde-a em um gerenciador de senhas; não a gere dentro do serviço Render.
+- `R2_BACKUP_INTERVAL_MINUTES`: intervalo (mínimo 5; padrão 15).
+- `R2_BACKUP_RETENTION_DAYS`: retenção dos snapshots diários (entre 7 e 365; padrão 30). O objeto `latest` permanece separado.
+
+O aplicativo grava `rota-mind-backup-v1/latest.rmbak` e snapshots diários em `rota-mind-backup-v1/daily/`. O endpoint autenticado `GET /api/admin/cloud-backup` informa o status sem exibir segredos; `POST` nesse mesmo endpoint solicita um snapshot manual. O primeiro envio automático ocorre 30 segundos após a inicialização. A restauração ainda requer uma etapa própria, o bot parado e a mesma chave de criptografia.

@@ -20,6 +20,7 @@ import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseN
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { computeConditionalDispatchBlockers, computeConditionalDispatchPriorities, ConditionalPriorityClient } from "./services/conditionalDispatchPriority";
 import { DispatchRaceCoordinator } from "./services/dispatchRaceCoordinator";
+import { getCloudBackupStatus, runCloudBackup, startCloudBackup, stopCloudBackup } from "./services/cloudBackup";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, DispatchMatchupRule, LeaderContact, PanelUserRole, RouteDispatch, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
@@ -1477,6 +1478,21 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/api/admin/cloud-backup") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      if (request.method === "GET") {
+        sendJson(response, 200, getCloudBackupStatus());
+        return;
+      }
+      if (!getCloudBackupStatus().configured) {
+        sendJson(response, 503, { error: "Configure as variáveis do backup no ambiente do servidor." });
+        return;
+      }
+      void runCloudBackup(dataDir).catch(() => undefined);
+      sendJson(response, 202, { accepted: true, status: getCloudBackupStatus() });
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/logout") {
       const session = getSessionClaims(request)!;
       for (const [id, expires] of revokedSessions) if (expires <= Date.now()) revokedSessions.delete(id);
@@ -2030,6 +2046,7 @@ server.listen(port, "0.0.0.0", () => {
   }
   startKeepAlive();
   startDailySessionReset();
+  startCloudBackup(dataDir);
   void preloadClientWorkers().catch((error) => {
     console.error(`Falha no pré-carregamento dos workers: ${error instanceof Error ? error.message : String(error)}`);
   });
@@ -2044,6 +2061,7 @@ async function shutdown() {
   const deadline = setTimeout(() => process.exit(1), 10_000);
   deadline.unref();
   console.log("Encerrando bots...");
+  stopCloudBackup();
   await Promise.all(Array.from(bots.values()).map((item) => item.shutdown().catch(() => undefined)));
   server.close(() => process.exit(0));
   server.closeIdleConnections();
